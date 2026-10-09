@@ -1,20 +1,92 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Rekono: Automate Your Offensive Security Recon"
+sidebarTitle: "Home"
+description: "Rekono chains 19 hacking tools automatically, turns raw outputs into a clean attack surface inventory, and keeps your team focused on what actually needs a hacker."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Rekono is an offensive security platform built for penetration testers and red teams who are tired of babysitting terminals. Define a target once, and Rekono runs the full reconnaissance pipeline for you — OSINT, host discovery, port scanning, service enumeration, vulnerability detection, and exploit matching — chaining each tool's output directly into the next one.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Deploy Rekono with Docker Compose and run your first scan in minutes.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how workers, queues, and tool chaining fit together.
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/projects-and-targets">
+    Learn about projects, targets, processes, tasks, and findings.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Automate everything Rekono does via its full REST API.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What Rekono does for you
+
+Every assessment follows roughly the same sequence: gather public data, discover hosts, enumerate ports and services, check for known vulnerabilities, and search for exploits. Rekono performs that entire sequence autonomously. What one tool discovers becomes the input for the next tool — ports found by Nmap are immediately scanned by the right service-specific tools, technologies detected are checked against CVE databases, and vulnerabilities are matched against public exploit databases.
+
+<Steps>
+  <Step title="Deploy">
+    Start the full stack with a single Docker Compose command. PostgreSQL, Valkey, backend workers, frontend, and Nginx TLS proxy all start together.
+    ```bash
+    docker compose up -d --scale executions-worker=5
+    ```
+  </Step>
+  <Step title="Create a project and target">
+    Log in at `https://127.0.0.1` with `rekono:rekono`, create a project for your engagement, and add the target domain or IP you want to assess.
+  </Step>
+  <Step title="Launch a task">
+    Select a built-in process (or build your own) and start a task against your target. Rekono schedules and chains the executions automatically.
+  </Step>
+  <Step title="Review findings">
+    Findings land deduplicated, enriched with CVE scores and HackTricks links, and ready for triage — confirm real vulnerabilities, dismiss false positives, and generate your report.
+  </Step>
+</Steps>
+
+## Integrated hacking tools
+
+Rekono ships with 19 tools organized by stage. Each tool's output feeds the next stage automatically.
+
+<CardGroup cols={3}>
+  <Card title="OSINT" icon="magnifying-glass">
+    theHarvester, EmailHarvester
+  </Card>
+  <Card title="Host & Port Scanning" icon="network-wired">
+    Nmap
+  </Card>
+  <Card title="Web Enumeration" icon="globe">
+    Dirsearch, Gobuster, CMSeeK, JoomScan, Nikto, OWASP ZAP
+  </Card>
+  <Card title="SSL / TLS" icon="lock">
+    Sslscan, SSLyze
+  </Card>
+  <Card title="Vulnerability Scanning" icon="shield-halved">
+    Nuclei, Log4j Scan, Spring4Shell Scan
+  </Card>
+  <Card title="Exploitation" icon="bug">
+    SearchSploit, Metasploit
+  </Card>
+</CardGroup>
+
+## Explore the docs
+
+<CardGroup cols={2}>
+  <Card title="Vulnerability Management" icon="shield-check" href="/features/vulnerability-management">
+    Triage findings, track false positives, and watch Rekono auto-resolve fixed issues.
+  </Card>
+  <Card title="Alerts & Notifications" icon="bell" href="/features/alerts-and-notifications">
+    Get notified by email or Telegram the moment a finding you care about appears.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/configuration/integrations">
+    Connect DefectDojo, VirusTotal, Telegram, and multiple CVE data sources.
+  </Card>
+  <Card title="Telegram Bot" icon="paper-plane" href="/features/telegram-bot">
+    Launch scans and review findings from your phone via the Rekono Telegram bot.
+  </Card>
+  <Card title="Reports" icon="file-pdf" href="/features/reports">
+    Generate PDF deliverables from your assessment findings with custom templates.
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/self-hosting/docker-compose">
+    Deploy on your own infrastructure with Docker Compose.
+  </Card>
+</CardGroup>

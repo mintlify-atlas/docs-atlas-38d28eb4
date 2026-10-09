@@ -1,0 +1,131 @@
+---
+title: 'Projects and Targets in Rekono'
+sidebarTitle: 'Projects & Targets'
+description: 'Projects organize your security engagements; targets define the domains, IPs, or URLs that Rekono scans across each assessment.'
+---
+
+Rekono structures every security engagement around two foundational concepts: **projects** and **targets**. A project is the top-level workspace that groups everything belonging to one assessment — its targets, running tasks, all findings discovered, and the team members who can access it. A target is a specific host, network, or domain inside a project that Rekono will scan. This page explains both concepts, how they relate to each other, and the additional scoping mechanisms — target ports and the denylist — that let you control exactly what gets tested.
+
+## Projects
+
+A **Project** is the root container of a Rekono engagement. Every target you add, every task you launch, and every finding that gets reported belongs to exactly one project. Projects are unique across the whole platform by name, so two teams can't accidentally share a workspace.
+
+```python
+class Project(BaseModel):
+    name        = models.TextField(max_length=100, unique=True)
+    description = models.TextField(max_length=300)
+    owner       = models.ForeignKey(AUTH_USER_MODEL, on_delete=models.SET_NULL, ...)
+    members     = models.ManyToManyField(AUTH_USER_MODEL, related_name="projects", ...)
+    tags        = TaggableManager()
+```
+
+### Project fields
+
+| Field | Max length | Notes |
+|---|---|---|
+| `name` | 100 chars | Unique across the entire platform; used in notifications and reports |
+| `description` | 300 chars | Free-text explanation of the assessment scope |
+| `owner` | — | The user who created the project; set to `NULL` if that user is deleted |
+| `members` | — | Many-to-many relationship; all members can read and act on project data |
+| `tags` | — | Free labels used to organise and filter projects in the UI |
+
+### Member roles
+
+The `owner` field records who created the project, but access control is driven by the `members` many-to-many relation. Any user who is a member of a project can view its targets, launch tasks, and interact with findings. The platform's broader role system (auditor, admin, etc.) applies on top of membership.
+
+<Tip>
+  Create a project per engagement, not per target. Grouping all targets of one assessment under one project gives you a unified attack-surface view, consolidated metrics, and a single report.
+</Tip>
+
+---
+
+## Targets
+
+A **Target** is a host, network, or domain that belongs to a project and serves as the first input for every tool execution inside that project. When you add a target, Rekono auto-detects its type by resolving domains and parsing network notation — you never have to set the type manually.
+
+```python
+class Target(BaseInput):
+    project = models.ForeignKey(Project, related_name="targets", on_delete=models.CASCADE)
+    target  = models.TextField(max_length=100)
+    type    = models.TextField(max_length=10, choices=TargetType.choices)
+```
+
+Each `(project, target)` pair is unique, so the same IP or domain can appear in multiple projects but only once within any given project.
+
+### Supported target types
+
+Rekono detects the target type automatically from the value you provide. The `TargetType` enum defines every valid form:
+
+| Value | Description | Example |
+|---|---|---|
+| `Private IP` | IPv4 or IPv6 address in a private range | `192.168.1.1`, `10.0.0.5` |
+| `Public IP` | IPv4 or IPv6 address routable on the Internet | `93.184.216.34` |
+| `Network` | CIDR block — all hosts in the range are targeted | `192.168.1.0/24` |
+| `IP range` | Dash-delimited range of addresses | `192.168.1.1-100` |
+| `Domain` | Fully qualified domain name that resolves to an IP | `example.com`, `api.example.com` |
+
+<Note>
+  Network and IP-range targets cannot be scanned by tools that only accept a single host. Rekono uses the type to filter which tool configurations can run against each target.
+</Note>
+
+### How type detection works
+
+When you save a new target, Rekono runs `Target.get_type()`:
+
+1. Tries to parse the value as an IP address (`ipaddress.ip_address`). Private ranges resolve to `PRIVATE_IP`; others become `PUBLIC_IP`.
+2. Tries to parse as a network (`ipaddress.ip_network`). Success → `NETWORK`.
+3. Checks the regex for an IP range and expands it to verify it has at least one address → `IP_RANGE`.
+4. Attempts a forward DNS lookup via `socket.gethostbyname` (cached in Redis). Success → `DOMAIN`.
+5. If none of the above match, a `ValidationError` is raised and the target is rejected.
+
+---
+
+## Target ports
+
+A **TargetPort** narrows the scope of a task to a single port on a target. Instead of letting Rekono discover open ports dynamically, you declare that a specific port must always be included as an input — useful when you already know the services exposed and want to jump straight to service-level scanning.
+
+```python
+class TargetPort(BaseInput):
+    target = models.ForeignKey(Target, related_name="target_ports", on_delete=models.CASCADE)
+    port   = models.IntegerField(validators=[MinValueValidator(0), MaxValueValidator(65535)])
+    path   = models.TextField(max_length=100, blank=True, null=True)
+```
+
+Each `(target, port)` combination is unique. The optional `path` field narrows the scope even further for web services — if a path is set, only URL paths that start with that prefix are included in the scan.
+
+When a task has a `target_port` set, executions receive the combined `host:port` value as the `TARGET` keyword and the explicit URL (including path when present) as the `URL` keyword. This means web tools like Dirsearch and ZAP scan exactly the endpoint you specified rather than probing the root.
+
+<Info>
+  Port findings discovered by previous executions take priority at runtime. Once Rekono has real `Port` findings for a target, those override the seeded `TargetPort` inputs, so the scan always works with the most current picture of the attack surface.
+</Info>
+
+---
+
+## Target denylist
+
+The **TargetDenylist** is a platform-wide safeguard that prevents Rekono from scanning certain addresses or domains. Each entry is a value that blocked targets must match — it can be an exact string, a regular expression, or an IP network in CIDR notation.
+
+```python
+class TargetDenylist(BaseModel):
+    target  = models.TextField(unique=True, max_length=100)
+    default = models.BooleanField(default=False)
+    blocked = models.IntegerField(default=0)
+```
+
+| Field | Notes |
+|---|---|
+| `target` | The pattern that denied targets must match (exact, regex, or CIDR) |
+| `default` | `True` for entries shipped by Rekono itself; these cannot be updated or removed by admins |
+| `blocked` | Running counter of how many targets this entry has blocked, useful for auditing |
+
+Default entries cover well-known private ranges and loopback addresses to prevent accidental scans of internal infrastructure. Administrators can add custom entries — for example, to protect a production environment during a development-only engagement.
+
+<Warning>
+  The denylist is checked when a target is created, not when a task runs. A target that passes the denylist at creation time will not be re-checked later, so keep the denylist up to date and review it after adding new entries.
+</Warning>
+
+---
+
+<Tip>
+  Change the default `rekono:rekono` credentials before adding any real targets. Every project, target, and finding is accessible to all platform members, so a compromised account means a compromised engagement. Go to **Profile → Change password** immediately after your first login.
+</Tip>

@@ -1,0 +1,324 @@
+---
+title: 'REST API Endpoints for Alerts'
+sidebarTitle: 'Alerts'
+description: 'Create and manage finding alert rules via the Rekono API to receive notifications when specific hosts, ports, or CVEs appear in a project.'
+---
+
+Rekono alerts are per-project notification rules that fire when a scan execution discovers a finding matching the rule's criteria. Each alert watches one **item** — a kind of finding such as a host, an open port, a CVE, or a vulnerability — and can optionally be filtered to a specific value (e.g. only fire for CVE-2024-1234). This page documents every REST endpoint for creating, reading, updating, and deleting alerts, as well as the subscription and enable/disable actions.
+
+## Authentication
+
+All endpoints require a valid session token:
+
+```http
+Authorization: Token <your-api-token>
+```
+
+Alerts are scoped to projects. Only members of a project can create, read, update, or delete its alerts. Only the alert owner can update or delete a specific alert.
+
+---
+
+## AlertItem enum
+
+The `item` field on an alert must be one of the following string values. Rekono maps each item to the finding model and filter condition it watches.
+
+| Value | Finding type watched | Notes |
+|-------|---------------------|-------|
+| `OSINT` | OSINT | Triggers on any new OSINT finding. |
+| `Host` | Host | Can be filtered by `value` (IP address). |
+| `Open Port` | Port | Triggers when a port with status `OPEN` is found. |
+| `Service` | Port | Triggers when a port has an identified service. Can be filtered by `value` (service name). |
+| `Technology` | Technology | Can be filtered by `value` (technology name). |
+| `Credential` | Credential | Triggers on any new credential finding. |
+| `Vulnerability` | Vulnerability | Triggers on any new vulnerability finding. |
+| `CVE` | Vulnerability | Triggers only for vulnerabilities with a CVE identifier. Can be filtered by `value` (CVE ID). |
+| `Trending CVE` | Vulnerability | Triggers whenever a CVE found in the project starts trending, even if the vulnerability was discovered earlier. |
+
+<Note>
+  Items that cannot be filtered by value (`OSINT`, `Open Port`, `Credential`, `Vulnerability`, `Trending CVE`) will have any supplied `value` silently set to `null` by the API. The `Trending CVE` item stores `"True"` as its internal value automatically.
+</Note>
+
+---
+
+## Endpoints
+
+### List Alerts
+
+<br />
+
+**`GET /api/alerts/`**
+
+Returns all alerts belonging to projects the authenticated user is a member of.
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over the `item` and `value` fields.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort results. Allowed values: `id`, `project`, `item`, `owner`. Prefix with `-` for descending order.
+</ParamField>
+
+<ParamField query="project" type="integer">
+  Filter alerts belonging to a specific project ID.
+</ParamField>
+
+<ParamField query="item" type="string">
+  Filter by alert item value (e.g. `CVE`, `Host`).
+</ParamField>
+
+<ParamField query="enabled" type="boolean">
+  Filter by enabled (`true`) or disabled (`false`) alerts.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer">
+  Unique numeric identifier of the alert.
+</ResponseField>
+
+<ResponseField name="project" type="integer">
+  ID of the project this alert belongs to.
+</ResponseField>
+
+<ResponseField name="item" type="string">
+  Kind of finding the alert watches. One of the `AlertItem` values listed above.
+</ResponseField>
+
+<ResponseField name="value" type="string">
+  Optional filter value. For a `Host` alert this might be `"192.168.1.1"`; for a `CVE` alert it might be `"CVE-2024-1234"`. `null` if the item type does not support filtering.
+</ResponseField>
+
+<ResponseField name="enabled" type="boolean">
+  Whether the alert is currently active and will fire notifications.
+</ResponseField>
+
+<ResponseField name="owner" type="object">
+  Minimal user object (`id`, `username`) of the user who created the alert.
+</ResponseField>
+
+<ResponseField name="subscribed" type="boolean">
+  Whether the requesting user is currently subscribed to this alert.
+</ResponseField>
+
+<ResponseField name="subscribers" type="array">
+  List of user IDs subscribed to receive notifications from this alert.
+</ResponseField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/?project=5&item=CVE"
+```
+
+---
+
+### Create an Alert
+
+<br />
+
+**`POST /api/alerts/`**
+
+Creates a new alert on a project. The requesting user becomes the alert's owner and is automatically subscribed. New alerts are always created in the `enabled` state — it cannot be set to `false` at creation time.
+
+**Request body**
+
+<ParamField body="project" type="integer" required>
+  ID of the project this alert should watch.
+</ParamField>
+
+<ParamField body="item" type="string" required>
+  The kind of finding to watch. Must be one of the `AlertItem` string values (e.g. `"CVE"`, `"Host"`, `"Vulnerability"`).
+</ParamField>
+
+<ParamField body="value" type="string">
+  Optional specific value to filter on (e.g. a CVE ID or IP address). Ignored for item types that do not support value filtering.
+</ParamField>
+
+<ParamField body="subscribe_all_members" type="boolean">
+  If `true`, all current members of the project are subscribed to the alert when it is created. If `false` (default), only the owner is subscribed. Write-only — not returned in responses.
+</ParamField>
+
+**Example — create a CVE alert**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": 5,
+    "item": "CVE",
+    "value": "CVE-2024-1234",
+    "subscribe_all_members": false
+  }' \
+  "https://rekono.example.com/api/alerts/"
+```
+
+**Response** — `201 Created`
+
+```json
+{
+  "id": 27,
+  "project": 5,
+  "item": "CVE",
+  "value": "CVE-2024-1234",
+  "enabled": true,
+  "owner": { "id": 3, "username": "alice" },
+  "subscribed": true,
+  "subscribers": [3]
+}
+```
+
+---
+
+### Get an Alert
+
+<br />
+
+**`GET /api/alerts/{id}/`**
+
+Retrieves a single alert by its numeric ID. The requesting user must be a member of the project the alert belongs to.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the alert.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/27/"
+```
+
+---
+
+### Update an Alert
+
+<br />
+
+**`PUT /api/alerts/{id}/`**
+
+Updates the `value` filter of an existing alert. Only the alert owner may update it. The `item` and `project` fields cannot be changed — changing the item is semantically a different alert. To change the item, delete the existing alert and create a new one.
+
+<Note>
+  The PUT endpoint only accepts alerts that are `enabled` and whose item type supports value filtering: `Host`, `Service`, `Technology`, and `CVE`. Attempting to update other alert types returns `404 Not Found` from the filtered queryset.
+</Note>
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the alert to update.
+</ParamField>
+
+**Request body**
+
+<ParamField body="value" type="string">
+  The new filter value to apply (e.g. a new IP address or CVE ID). Set to `null` to remove the value filter and watch all instances of the item type.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "value": "CVE-2024-5678" }' \
+  "https://rekono.example.com/api/alerts/27/"
+```
+
+---
+
+### Delete an Alert
+
+<br />
+
+**`DELETE /api/alerts/{id}/`**
+
+Permanently removes an alert and unsubscribes all its subscribers. Only the alert owner may delete it.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the alert to delete.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/27/"
+```
+
+**Response** — `204 No Content`
+
+---
+
+## Subscription actions
+
+In addition to the core CRUD endpoints, each alert exposes two action sub-resources for managing per-user notification subscriptions without requiring ownership of the alert.
+
+### Subscribe / Unsubscribe
+
+**`POST /api/alerts/{id}/subscription/`** — subscribe the requesting user to the alert.
+
+**`DELETE /api/alerts/{id}/subscription/`** — unsubscribe the requesting user from the alert.
+
+Any project member may subscribe or unsubscribe themselves. A `400 Bad Request` is returned if the user is already subscribed (on POST) or is not yet subscribed (on DELETE).
+
+```bash
+# Subscribe
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/27/subscription/"
+
+# Unsubscribe
+curl -s -X DELETE \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/27/subscription/"
+```
+
+**Response** — `204 No Content`
+
+---
+
+### Enable / Disable
+
+**`POST /api/alerts/{id}/enable/`** — enable the alert so it fires notifications again.
+
+**`DELETE /api/alerts/{id}/enable/`** — disable the alert without deleting it.
+
+Only the alert owner may use these endpoints. Returns the updated alert object on success or `400 Bad Request` if the alert is already in the requested state.
+
+```bash
+# Disable an alert
+curl -s -X DELETE \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/27/enable/"
+
+# Re-enable it
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/alerts/27/enable/"
+```
+
+**Response** — `200 OK` with the updated alert object.
+
+---
+
+## Error responses
+
+<Accordion title="Common error shapes">
+
+| Status | Meaning |
+|--------|---------|
+| `400 Bad Request` | Validation failed — response body contains field-level messages. Also returned when trying to create a duplicate alert (same project, item, and value). |
+| `401 Unauthorized` | No valid authentication token was provided. |
+| `403 Forbidden` | The user is not a member of the project, or is not the alert owner for a write operation. |
+| `404 Not Found` | The alert ID does not exist, or it is not updatable (wrong item type or disabled) for a PUT request. |
+
+</Accordion>

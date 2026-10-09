@@ -1,0 +1,178 @@
+---
+title: 'Hacking Tools and Configurations in Rekono'
+sidebarTitle: 'Tools & Configurations'
+description: 'Rekono runs 19 hacking tools through configurations that define commands, arguments, and what findings each one needs as input.'
+---
+
+Rekono's automation engine is built on top of a catalog of **tools** and **configurations**. A tool is a real security program — Nmap, Nuclei, Metasploit — together with the metadata Rekono needs to run it: its command, how to check whether it is installed, and how to parse its output into structured findings. A configuration is a named preset for that tool: a specific command template with placeholders, a stage that places it in the assessment order, and a set of declared inputs and outputs that tell the scheduler what findings it needs and what it will produce. This page explains the full model so you understand how Rekono decides which tool runs next and how to build effective processes.
+
+## Tools
+
+Each `Tool` record in the database represents one installed security program. The `is_installed` flag and `version` fields are updated automatically at startup by running the tool's `version_argument` command.
+
+```python
+class Tool(BaseLike):
+    name                      = models.TextField(max_length=30, unique=True)
+    command                   = models.TextField(max_length=30)
+    script                    = models.TextField(max_length=100, blank=True, null=True)
+    script_directory_property = models.TextField(max_length=100, blank=True, null=True)
+    run_directory_property    = models.TextField(max_length=100, blank=True, null=True)
+    ignore_exit_code          = models.BooleanField(default=False)
+    is_installed              = models.BooleanField(default=False)
+    version                   = models.TextField(max_length=100, blank=True, null=True)
+    version_argument          = models.TextField(max_length=30, blank=True, null=True)
+    output_format             = models.TextField(max_length=5, blank=True, null=True)
+    reference                 = models.TextField(max_length=250, blank=True, null=True)
+    defectdojo_scan_type      = models.TextField(max_length=100, blank=True, null=True)
+```
+
+### Key tool fields
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable name; also resolves the executor and parser class by convention |
+| `command` | The binary (or `python3` for script-based tools) that the worker invokes |
+| `script` | Script filename for tools like Log4j Scan and EmailHarvester that aren't standalone binaries |
+| `is_installed` | Checked at startup; configurations whose tool is not installed are skipped silently |
+| `version` | Detected version string, displayed in the UI and included in reports |
+| `ignore_exit_code` | Set to `True` for tools that return a non-zero exit code even on success (e.g. Dirsearch, GitLeaks) |
+| `output_format` | Extension of the output file (`xml`, `json`, `csv`, `txt`) handed to the parser |
+| `defectdojo_scan_type` | Scan-type label required when shipping results to DefectDojo |
+
+### Intensity levels
+
+Every tool supports a subset of five intensity levels. The `Intensity` enum maps a descriptive name to an integer so processes and tasks can declare a single intensity value that each tool translates to its own arguments:
+
+| Value | Integer | Description |
+|---|---|---|
+| `SNEAKY` | 1 | Slowest and most evasive; minimises noise on IDS/IPS |
+| `LOW` | 2 | Reduced speed; suitable for sensitive environments |
+| `NORMAL` | 3 | Balanced default for most assessments |
+| `HARD` | 4 | Aggressive scanning; prioritises speed over stealth |
+| `INSANE` | 5 | Maximum aggression; may overwhelm fragile targets |
+
+Each tool maps these values to its own CLI flags via the `Intensity` join model:
+
+```python
+class Intensity(BaseModel):
+    tool     = models.ForeignKey(Tool, related_name="intensities", on_delete=models.CASCADE)
+    argument = models.TextField(max_length=50, default="", blank=True)
+    value    = models.IntegerField(choices=IntensityEnum.choices, default=IntensityEnum.NORMAL)
+```
+
+For example, Nmap maps `SNEAKY → -T1`, `LOW → -T2`, `NORMAL → -T3`, `HARD → -T4`, and `INSANE → -T5`.
+
+### Assessment stages
+
+The `Stage` enum defines the five phases of an assessment, ordered from passive reconnaissance to exploitation. The stage of a configuration controls when it runs within a process — earlier stages feed their findings as inputs to later ones:
+
+| Value | Integer | Description |
+|---|---|---|
+| `OSINT` | 1 | Passive data gathered from public sources (subdomains, emails, ASNs) |
+| `ENUMERATION` | 2 | Active host, port, and service discovery |
+| `VULNERABILITIES` | 3 | Vulnerability scanning of what was enumerated |
+| `SERVICES` | 4 | Deep testing of individual services (web, SSH, SMB, TLS) |
+| `EXPLOITATION` | 5 | Search for public exploits matching discovered vulnerabilities |
+
+---
+
+## Configurations
+
+A **Configuration** is a named preset for one tool — the specific command template, intensity mapping, stage, and the set of input and output types that wire it into the process execution graph.
+
+```python
+class Configuration(BaseModel):
+    name                 = models.TextField(max_length=30)
+    tool                 = models.ForeignKey(Tool, related_name="configurations", on_delete=models.CASCADE)
+    command_template     = models.TextField(max_length=250, default="", blank=True)
+    stage                = models.IntegerField(choices=Stage.choices)
+    default              = models.BooleanField(default=False)
+    default_scanned_port = models.IntegerField(blank=True, null=True)
+    deprecated           = models.BooleanField(default=False)
+```
+
+The `command_template` uses named placeholders wrapped in curly braces that the executor fills at runtime. For example, Nmap's *TCP ports & service versions* configuration uses:
+
+```bash
+--privileged {host} {intensity} {ports} -sS -sV -A -oX {output}
+```
+
+The `{host}`, `{intensity}`, `{ports}`, and `{output}` placeholders are resolved from the findings and task parameters available at execution time. The `default` flag marks the configuration that Rekono uses when a user selects just the tool without specifying a configuration. The `default_scanned_port` provides a fallback port number for service-specific tools like SSH Audit (port 22) and Sslscan (port 443) when no target port is defined.
+
+### Arguments and inputs
+
+Each configuration declares one or more `Argument` records, and each argument declares one or more `Input` records that map the argument's placeholder to an `InputType`:
+
+```python
+class Argument(BaseModel):
+    configuration = models.ForeignKey(Configuration, related_name="arguments", ...)
+    name          = models.TextField(max_length=20)   # matches the {placeholder} name
+    argument      = models.TextField(max_length=50)   # the actual CLI flag, e.g. "-p"
+    required      = models.BooleanField(default=False)
+    multiple      = models.BooleanField(default=False)
+
+class Input(BaseModel):
+    argument = models.ForeignKey(Argument, related_name="inputs", ...)
+    type     = models.ForeignKey(InputType, related_name="inputs", ...)
+    filter   = models.TextField(max_length=250, blank=True, null=True)
+    order    = models.IntegerField(default=1)
+```
+
+The `order` field on `Input` defines priority: if multiple input types can fill the same argument, the first one that has data available is used. The `filter` field restricts which specific findings qualify — for example, an SSH Audit input can filter by `service=ssh` to ensure it only runs against ports serving SSH.
+
+### Input types
+
+The full set of `InputType` values that arguments can map to:
+
+| Input type | Backed by model | Notes |
+|---|---|---|
+| `OSINT` | `findings.OSINT` | Passive recon data (IPs, domains, emails, etc.) |
+| `Host` | `findings.Host` | Discovered hosts; fallback is the raw `Target` |
+| `Port` | `findings.Port` | Open ports; fallback is `TargetPort` |
+| `Path` | `findings.Path` | Web endpoints or SMB shares |
+| `Technology` | `findings.Technology` | Detected software and versions |
+| `Credential` | `findings.Credential` | Exposed credentials |
+| `Vulnerability` | `findings.Vulnerability` | Confirmed vulnerabilities (CVEs, etc.) |
+| `Exploit` | `findings.Exploit` | Public exploit records |
+| `Wordlist` | `wordlists.Wordlist` | User-supplied wordlists for brute-force tools |
+| `Authentication` | authentication model | HTTP Basic/Token/Cookie auth for web tools |
+| `Http Header` | HTTP header model | Custom headers forwarded to web tools |
+
+### Outputs
+
+Each configuration also declares `Output` records, listing the `InputType` values that its executions produce. The task scheduler uses these output declarations to determine when a later configuration has the inputs it requires — a configuration only runs after all the configurations that produce its required inputs have finished.
+
+---
+
+## The 19 supported tools
+
+Rekono ships with data fixtures for the following tools. The `is_installed` flag reflects availability in your deployment:
+
+| Tool | Stage | Category |
+|---|---|---|
+| theHarvester | OSINT | Subdomain & email discovery |
+| EmailHarvester | OSINT | Email harvesting |
+| EmailFinder | OSINT | Email discovery |
+| Gobuster (DNS mode) | OSINT | Subdomain enumeration |
+| Nmap | ENUMERATION | Host, port & service scanning |
+| Gobuster (VHOST mode) | ENUMERATION | Virtual host discovery |
+| Dirsearch | SERVICES | Web directory & endpoint brute-force |
+| Gobuster (dir mode) | SERVICES | Web endpoint enumeration |
+| Sslscan | SERVICES | SSL/TLS analysis |
+| SSLyze | SERVICES | SSL/TLS analysis |
+| CMSeeK | SERVICES | CMS detection & enumeration |
+| JoomScan | SERVICES | Joomla vulnerability scanning |
+| Log4j Scan | SERVICES | Log4Shell (CVE-2021-44228) detection |
+| Spring4Shell Scan | SERVICES | Spring4Shell (CVE-2022-22965) detection |
+| GitLeaks | SERVICES | Exposed secrets in Git repositories |
+| SSH Audit | SERVICES | SSH configuration & vulnerability audit |
+| SMBMap | SERVICES | SMB share enumeration |
+| Nikto | SERVICES | Web server misconfiguration & vulnerability scan |
+| ZAP | SERVICES | OWASP ZAP active web application scan |
+| Nuclei | SERVICES | Template-based vulnerability scanning |
+| SearchSploit | EXPLOITATION | Exploit Database search by technology or CVE |
+| Metasploit | EXPLOITATION | Exploit search and execution by CVE |
+
+<Note>
+  Tools must be installed on the `executions-worker` containers to be available. If a tool is missing, Rekono sets `is_installed = False` and silently skips its configurations during task execution. Run `docker compose up -d --scale executions-worker=5` to start the workers, and check the Tools page in the UI to see which tools are detected.
+</Note>

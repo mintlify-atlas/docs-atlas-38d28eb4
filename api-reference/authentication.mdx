@@ -1,0 +1,309 @@
+---
+title: 'Authenticate with the Rekono API'
+sidebarTitle: 'Authentication'
+description: 'Rekono API uses JWT bearer tokens for web sessions and long-lived API tokens for programmatic access; obtain tokens via the login endpoint.'
+---
+
+Rekono supports two authentication methods for its REST API. **JWT (JSON Web Tokens)** power browser-based sessions: a short-lived access token is sent with every request and is refreshed periodically from a longer-lived refresh token. **API tokens** are long-lived credentials intended for scripts, CI/CD pipelines, and integrations such as the Telegram bot — they work as a static `Token` header value and never expire unless you set an explicit expiration date. Both methods are recognised by every protected endpoint; the choice depends on the use case.
+
+<Note>
+  All API endpoints require authentication except the OpenAPI schema endpoints (`/api/schema/`, `/api/schema/swagger-ui/`, and `/api/schema/redoc/`), which are publicly accessible.
+</Note>
+
+---
+
+## JWT Authentication
+
+JWT authentication is built on **djangorestframework-simplejwt** and uses the HS512 algorithm. Access tokens are valid for **10 minutes**; refresh tokens are valid for **1 hour** and are automatically rotated (the previous refresh token is blacklisted when a new one is issued).
+
+### Step 1 — Obtain Tokens
+
+Submit credentials to the login endpoint:
+
+```http
+POST /api/security/login/
+```
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `username` | string | ✅ | The user's login username. |
+| `password` | string | ✅ | The user's password. |
+
+```bash
+curl -X POST https://your-host/api/security/login/ \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "rekono", "password": "rekono"}'
+```
+
+**Successful response — no MFA (HTTP 200)**
+
+```json
+{
+  "access": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9...",
+  "refresh": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Successful response — MFA enabled (HTTP 200)**
+
+When the account has MFA enabled, the login endpoint returns a temporary MFA token instead. This token can only be submitted to the MFA endpoint to complete the login:
+
+```json
+{
+  "mfa": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+<Info>
+  The login endpoint is rate-limited with the `login` throttle scope to mitigate brute-force attacks. Repeated failed attempts will result in a `429 Too Many Requests` response.
+</Info>
+
+### Step 2 — Use the Access Token
+
+Include the access token in the `Authorization` header of every subsequent request:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+```bash
+curl https://your-host/api/projects/ \
+  -H 'Authorization: Bearer eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9...'
+```
+
+### Step 3 — Refresh the Access Token
+
+When the access token expires (after 10 minutes), obtain a new pair without re-entering credentials:
+
+```http
+POST /api/security/refresh/
+```
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `refresh` | string | ✅ | The current refresh token. |
+
+```bash
+curl -X POST https://your-host/api/security/refresh/ \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9..."}'
+```
+
+**Response (HTTP 200)**
+
+```json
+{
+  "access": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9...",
+  "refresh": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+Both tokens are rotated on every refresh call. The previously issued refresh token is immediately blacklisted.
+
+### Step 4 — Logout
+
+Blacklist the refresh token to invalidate the session:
+
+```http
+POST /api/security/logout/
+```
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `refresh` | string | ✅ | The refresh token to blacklist. |
+
+```bash
+curl -X POST https://your-host/api/security/logout/ \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{"refresh": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9..."}'
+```
+
+A `200 OK` response confirms the token is blacklisted. Any subsequent request using the same refresh token will be rejected.
+
+---
+
+## Multi-Factor Authentication (MFA)
+
+When a user account has MFA enabled, the standard login flow splits into two steps: credential validation returns a temporary MFA token, and a second request exchanges a TOTP code (or email OTP) plus that token for the final access and refresh tokens.
+
+### Submit MFA Code
+
+```http
+POST /api/security/mfa/
+```
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `token` | string | ✅ | The temporary MFA token returned by `/api/security/login/`. |
+| `mfa` | string | ✅ | The 6-digit TOTP code from the authenticator app, or the OTP sent by email. |
+
+```bash
+curl -X POST https://your-host/api/security/mfa/ \
+  -H 'Content-Type: application/json' \
+  -d '{"token": "<mfa_token>", "mfa": "123456"}'
+```
+
+**Response (HTTP 200)**
+
+```json
+{
+  "access": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9...",
+  "refresh": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+The temporary MFA token is blacklisted immediately after a successful submission and cannot be reused.
+
+### Request an Email OTP
+
+For users without access to their TOTP device, a one-time password can be sent to their registered email address:
+
+```http
+POST /api/security/mfa/email/
+```
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `token` | string | ✅ | The temporary MFA token returned by `/api/security/login/`. |
+
+```bash
+curl -X POST https://your-host/api/security/mfa/email/ \
+  -H 'Content-Type: application/json' \
+  -d '{"token": "<mfa_token>"}'
+```
+
+A `204 No Content` response confirms the email was dispatched. The OTP expires after the number of minutes configured in `config.yaml` via the `mfa_expiration_minutes` setting. Submit the received code to `POST /api/security/mfa/` as the `mfa` field to complete the login.
+
+<Info>
+  Both MFA endpoints share the `mfa` throttle scope, which limits the number of attempts to protect the 6-digit code space from being enumerated.
+</Info>
+
+---
+
+## API Tokens
+
+API tokens are long-lived credentials stored as hashed values in the database. The plain token value is returned **only once** at creation time and is never retrievable again. Each token belongs exclusively to one user and carries that user's permissions.
+
+### List and Create Tokens
+
+```http
+GET  /api/api-tokens/
+POST /api/api-tokens/
+```
+
+<Note>
+  Managing API tokens requires JWT authentication. A request authenticated with an API token cannot create, list, or delete other API tokens.
+</Note>
+
+**Create request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | ✅ | A unique display name for this token (max 100 characters). |
+| `expiration` | datetime | ❌ | ISO 8601 datetime after which the token is rejected. Omit for a non-expiring token. |
+
+```bash
+curl -X POST https://your-host/api/api-tokens/ \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{"name": "ci-pipeline", "expiration": "2026-12-31T23:59:59Z"}'
+```
+
+**Create response (HTTP 201)**
+
+```json
+{
+  "id": 3,
+  "key": "a1b2c3d4e5f6...",
+  "name": "ci-pipeline",
+  "expiration": "2026-12-31T23:59:59Z"
+}
+```
+
+Save the `key` value immediately — it will not be shown again.
+
+**List response (HTTP 200)**
+
+Subsequent `GET` requests return tokens without the `key` field:
+
+```json
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {"id": 3, "name": "ci-pipeline", "expiration": "2026-12-31T23:59:59Z"},
+    {"id": 1, "name": "telegram-bot", "expiration": null}
+  ]
+}
+```
+
+### Delete a Token
+
+```http
+DELETE /api/api-tokens/{id}/
+```
+
+```bash
+curl -X DELETE https://your-host/api/api-tokens/3/ \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+A `204 No Content` response confirms the token has been revoked.
+
+### Using an API Token
+
+Pass the token in the `Authorization` header with the `Token` scheme:
+
+```http
+Authorization: Token <api_token>
+```
+
+```bash
+curl https://your-host/api/projects/ \
+  -H 'Authorization: Token a1b2c3d4e5f6...'
+```
+
+<Tip>
+  Use API tokens for **CI/CD pipelines**, automated scanners, and **Telegram bot integrations**. They eliminate the need to store credentials or manage token expiry inside your automation scripts.
+</Tip>
+
+---
+
+## Cookies vs. Tokens
+
+The Rekono frontend relies on **`httponly` cookies** (`rekono_access`, `rekono_refresh`) instead of reading tokens from the JavaScript environment. This is handled transparently by the login and refresh views, which set and clear the cookies automatically alongside the response body.
+
+When building API clients or automations, use the **`Authorization` header** directly — either `Bearer <access_token>` for JWT or `Token <api_token>` for API tokens. Do not attempt to manage cookies manually in non-browser clients.
+
+<Tabs>
+  <Tab title="JWT — Browser / Web App">
+    The browser session is maintained by `httponly` cookies set by the server. The frontend never reads the token values from JavaScript. Use this flow for interactive web sessions.
+
+    ```http
+    Authorization: Bearer <access_token>
+    ```
+  </Tab>
+  <Tab title="API Token — Automation / CI">
+    A static `Token` header is the simplest and most reliable option for scripts, pipelines, and long-running integrations that cannot refresh tokens periodically.
+
+    ```http
+    Authorization: Token <api_token>
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  API tokens grant **full access to the owning user's projects and data**. Store them in secrets managers or environment variables — never hard-code them in source files or commit them to version control. If a token is compromised, delete it immediately via `DELETE /api/api-tokens/{id}/` and issue a replacement.
+</Warning>

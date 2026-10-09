@@ -1,0 +1,202 @@
+---
+title: 'User Management, Roles, and MFA in Rekono'
+sidebarTitle: 'Users & Roles'
+description: 'Manage user accounts, assign project roles, and enforce two-factor authentication to control who can access and scan your projects.'
+---
+
+Rekono ships with a complete identity and access management system built into the platform — covering role-based access control, project membership, profile settings, multi-factor authentication via TOTP or email, and named API tokens for programmatic access. All of these controls are available to administrators through the API and the UI.
+
+## User Accounts
+
+Every Rekono user is assigned one of three platform-wide roles that determine which models they can read, write, and delete.
+
+<CardGroup cols={3}>
+  <Card title="Admin" icon="shield-halved">
+    Full access to every model. Can invite and disable users, manage projects, change all platform settings, and view the target denylist. Admins cannot change their own role or disable their own account.
+  </Card>
+  <Card title="Auditor" icon="magnifying-glass">
+    Runs security assessments and manages findings. Can create targets, tasks, processes, steps, wordlists, authentications, and findings. Cannot manage users, projects, or platform settings, and cannot see the target denylist.
+  </Card>
+  <Card title="Reader" icon="eye">
+    Read-only access to project data. Can manage their own notes, alerts, API tokens, reports, and Telegram chat registration, but cannot create or delete resources that affect scans or findings.
+  </Card>
+</CardGroup>
+
+Permissions nest strictly: every permission granted to Reader is also granted to Auditor, and every Auditor permission is granted to Admin.
+
+### Account lifecycle
+
+Accounts are never created directly; they are **invited** by an Admin, which sends an email with a one-time password to the new user. The invited user completes registration at `POST /api/users/signup/` with their username, first name, last name, password, and the OTP from the invitation email. Until registration is complete, `is_active` is `null` and the account cannot log in.
+
+Admins can:
+
+- **Invite** a user — `POST /api/users/` with `{ "email": "...", "role": "Auditor" }`
+- **Resend invitation** — `POST /api/users/{id}/resend/`
+- **Change role** — `PUT /api/users/{id}/` with `{ "role": "Reader" }`
+- **Disable account** — `DELETE /api/users/{id}/` (sets `is_active = false` and revokes all credentials; does not delete the user record if they have existing work)
+- **Re-enable account** — `POST /api/users/{id}/enable/` (sends a password-reset email to the user)
+
+<Warning>
+  Change the default `rekono` / `rekono` credentials immediately after the first login. The `DJANGO_SUPERUSER_PASSWORD` environment variable only applies on the very first run of the `initializer` container — leave it set to a strong value in your `.env` file and rotate it after deployment.
+</Warning>
+
+## Project Membership
+
+Projects are the top-level containers for targets, tasks, and findings in Rekono. Membership is managed by Admins at the project level; the project's `members` field is a many-to-many relation to the `User` model.
+
+Users can only see and interact with findings, tasks, executions, and targets that belong to projects they are members of. Being a member does not change a user's platform role — an Auditor added to a project can create tasks there, while a Reader added to the same project can only view data.
+
+<Note>
+  Even Admin-role users must be explicitly added as project members to access project-scoped data through the standard API endpoints. The Django admin interface bypasses project scoping.
+</Note>
+
+## User Profile
+
+Every authenticated user can read and update their own profile without requiring Admin privileges.
+
+<Tabs>
+  <Tab title="Read profile">
+    ```bash
+    GET /api/profile/
+    ```
+    Returns the current user's `username`, `first_name`, `last_name`, `email`, `pending_email`, `mfa` (boolean), `notification_scope`, `email_notifications`, and `telegram_notifications`.
+  </Tab>
+  <Tab title="Update profile">
+    ```bash
+    PUT /api/profile/
+    ```
+    Accepts any subset of the writable profile fields. For example, to switch notification scope:
+
+    ```json
+    {
+      "notification_scope": "All executions",
+      "email_notifications": true,
+      "telegram_notifications": false
+    }
+    ```
+
+    **Notification scope choices:**
+
+    | Value | Meaning |
+    |-------|---------|
+    | `Only alerts` | No execution notifications — only triggered alerts. |
+    | `Only my executions` | Notified only for tasks the user started themselves. |
+    | `All executions` | Notified for every execution across all their projects. |
+  </Tab>
+  <Tab title="Change password">
+    ```bash
+    PUT /api/profile/update-password/
+    ```
+    Provide the current password and the desired new password. On success, all open sessions are invalidated (JWT tokens blacklisted) and any linked Telegram chat is disconnected. The client must log in again with the new password.
+  </Tab>
+</Tabs>
+
+## Multi-Factor Authentication (MFA)
+
+Rekono supports two-factor authentication using TOTP (Time-Based One-Time Passwords, compatible with any authenticator app) with an email OTP fallback when the authenticator device is unavailable.
+
+<Steps>
+  <Step title="Register a TOTP secret">
+    ```bash
+    POST /api/profile/mfa/register/
+    ```
+    Generates a fresh TOTP secret and returns a `provisioning_uri` — scan this QR code with your authenticator app (Google Authenticator, Aegis, etc.). This is the only moment the secret is ever exposed; it is stored encrypted in the database.
+  </Step>
+  <Step title="Enable MFA">
+    ```bash
+    POST /api/profile/mfa/enable/
+    ```
+    Confirm the secret is working by submitting a live TOTP code:
+
+    ```json
+    { "otp": "123456" }
+    ```
+
+    MFA is enabled on the account only when the code is valid, preventing lockout from a misconfigured secret.
+  </Step>
+  <Step title="Log in with MFA">
+    After `POST /api/security/login/`, accounts with MFA enabled receive a short-lived MFA token instead of the full access/refresh tokens. Submit the TOTP code to:
+
+    ```bash
+    POST /api/security/mfa/
+    ```
+
+    ```json
+    { "mfa": "123456" }
+    ```
+
+    On success, the full access and refresh tokens are issued.
+  </Step>
+  <Step title="Request an email fallback code">
+    If your authenticator device is unavailable, request a one-time code by email:
+
+    ```bash
+    POST /api/security/mfa/email/
+    ```
+
+    The code is sent to the account's email address. Submit it to `POST /api/security/mfa/` in place of a TOTP code. Only OTPs issued for the `MFA` scope are accepted as a second factor — OTPs from other workflows (invitation, password reset) cannot be replayed here.
+  </Step>
+  <Step title="Disable MFA">
+    ```bash
+    POST /api/profile/mfa/disable/
+    ```
+    Requires a valid TOTP code as proof of account ownership before disabling:
+
+    ```json
+    { "otp": "123456" }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  MFA can only be managed through cookie-based JWT authentication. Clients authenticated with an API token cannot register, enable, or disable MFA, which prevents a compromised token from weakening account security.
+</Note>
+
+## API Tokens
+
+API tokens let scripts, CI pipelines, and third-party tools call the Rekono API without a username and password. Each token is named so users can tell them apart, and an optional expiration date ensures short-lived tokens can be issued for temporary access.
+
+**Key facts about API tokens:**
+
+- The plain token value is returned **once** at creation and never stored — only its hash is kept in the database.
+- A user's API tokens are personal and cannot be managed by other users.
+- Tokens can be managed only through cookie-based JWT authentication; a request authenticated by an API token cannot create, list, or delete tokens.
+- Disabling a user deletes all their API tokens automatically.
+
+<Tabs>
+  <Tab title="Create a token">
+    ```bash
+    POST /api/api-tokens/
+    ```
+
+    ```json
+    {
+      "name": "ci-pipeline",
+      "expiration": "2026-01-01T00:00:00Z"
+    }
+    ```
+
+    The response includes `key` — the plain token. Copy it now; it will not be shown again.
+  </Tab>
+  <Tab title="List tokens">
+    ```bash
+    GET /api/api-tokens/
+    ```
+
+    Returns all tokens owned by the authenticated user, with `id`, `name`, and `expiration`. The `key` field is never returned in list or detail responses.
+  </Tab>
+  <Tab title="Delete a token">
+    ```bash
+    DELETE /api/api-tokens/{id}/
+    ```
+
+    Immediately revokes the token. There is no way to recover a deleted token.
+  </Tab>
+  <Tab title="Use a token">
+    Pass the token in the `Authorization` header as a Bearer token:
+
+    ```bash
+    curl -H "Authorization: Token <your-token>" https://rekono.example.com/api/projects/
+    ```
+  </Tab>
+</Tabs>

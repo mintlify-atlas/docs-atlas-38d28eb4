@@ -1,0 +1,200 @@
+---
+title: 'Processes, Steps, and Tasks Explained'
+sidebarTitle: 'Processes & Tasks'
+description: 'Processes define reusable scan methodologies as ordered tool configurations; tasks run those processes against a specific target on demand or on a schedule.'
+---
+
+Rekono's automation model separates *what to scan* from *how to scan it*. A **process** encodes a methodology — a collection of tool configurations that together cover a full assessment workflow. A **task** applies that methodology to a specific target, either immediately or on a schedule, and optionally repeats it at regular intervals to track an evolving attack surface. This page explains processes, steps, and tasks in detail, including every field on the `Task` model, the scheduling and repetition options, and how a task moves through its lifecycle.
+
+## Processes
+
+A **Process** is a named, reusable group of tool configurations that Rekono executes together as a single unit. Think of it as a documented pentesting methodology: "full web assessment", "external recon + enumeration", or "TLS deep-dive". Processes are platform-wide and can be shared across projects; any user can launch the same process against a different target.
+
+```python
+class Process(BaseLike):
+    name        = models.TextField(max_length=100, unique=True)
+    description = models.TextField(max_length=500)
+    owner       = models.ForeignKey(AUTH_USER_MODEL, on_delete=models.SET_NULL, blank=True, null=True)
+    tags        = TaggableManager()
+```
+
+| Field | Notes |
+|---|---|
+| `name` | Unique across the platform; shown in the task list and notifications |
+| `description` | Up to 500 characters explaining what the process covers and when to use it |
+| `owner` | The user who created it; `NULL` for the built-in processes that Rekono ships |
+| `tags` | Labels used to filter processes in the UI |
+
+Rekono ships several built-in processes covering common scenarios (full recon, web app assessment, exploit search). Users can create their own by assembling any combination of tool configurations as steps.
+
+---
+
+## Steps
+
+A **Step** is the unit that binds a tool configuration to a process. Each step says: "this process must run this configuration."
+
+```python
+class Step(BaseModel):
+    process       = models.ForeignKey(Process, related_name="steps", on_delete=models.CASCADE)
+    configuration = models.ForeignKey(Configuration, related_name="steps", on_delete=models.CASCADE, ...)
+```
+
+Each `(process, configuration)` pair is unique — the same configuration can appear in different processes but only once per process.
+
+### Steps have no fixed order
+
+Steps do **not** carry a sequence number. Rekono determines the execution order dynamically at task runtime from two signals:
+
+1. **Stage** — each configuration declares the assessment stage it belongs to (`OSINT → ENUMERATION → VULNERABILITIES → SERVICES → EXPLOITATION`). Earlier stages run before later ones.
+2. **Available findings** — a configuration only runs once every input type it requires has data available. For example, an SSH Audit configuration needs a `Port` finding with service `ssh`. Rekono queues it the moment that finding is reported, regardless of which other steps are still running.
+
+This means two steps in the same stage that need different inputs can run in parallel, and a step in a later stage can start before all steps in an earlier stage have finished — as soon as its specific prerequisites are met.
+
+---
+
+## Tasks
+
+A **Task** is the execution request that pairs a target with either a process or a single configuration. It holds every parameter that controls how and when the scan happens.
+
+```python
+class Task(BaseModel):
+    target                = models.ForeignKey(Target, related_name="tasks", on_delete=models.CASCADE)
+    process               = models.ForeignKey(Process, ..., blank=True, null=True)
+    configuration         = models.ForeignKey(Configuration, ..., blank=True, null=True)
+    intensity             = models.IntegerField(choices=Intensity.choices, default=Intensity.NORMAL)
+    executor              = models.ForeignKey(AUTH_USER_MODEL, related_name="tasks", ...)
+    scheduled_at          = models.DateTimeField(blank=True, null=True)
+    repeat_in             = models.IntegerField(blank=True, null=True)          # 1–60
+    repeat_time_unit      = models.TextField(choices=TimeUnit.choices, blank=True, null=True)
+    creation              = models.DateTimeField(auto_now_add=True)
+    enqueued_at           = models.DateTimeField(blank=True, null=True)
+    start                 = models.DateTimeField(blank=True, null=True)
+    end                   = models.DateTimeField(blank=True, null=True)
+    target_port           = models.ForeignKey(TargetPort, ..., blank=True, null=True)
+    wordlists             = models.ManyToManyField(Wordlist, blank=True)
+    input_technologies    = models.ManyToManyField(InputTechnology, blank=True)
+    input_vulnerabilities = models.ManyToManyField(InputVulnerability, blank=True)
+```
+
+### Task fields reference
+
+<Accordion title="Core scan parameters">
+
+| Field | Description |
+|---|---|
+| `target` | The project target to scan. Required. |
+| `process` | The process to execute. Mutually exclusive with `configuration`. |
+| `configuration` | A single tool configuration to run. Mutually exclusive with `process`. |
+| `intensity` | Scan aggressiveness: `SNEAKY (1)`, `LOW (2)`, `NORMAL (3)`, `HARD (4)`, `INSANE (5)`. Applied to every execution in the task. |
+| `executor` | The user who created the task, recorded for audit trail purposes. |
+
+</Accordion>
+
+<Accordion title="Scheduling and repetition">
+
+| Field | Description |
+|---|---|
+| `scheduled_at` | Future datetime to start the task. Leave `null` to run immediately. Must be in the future at creation time. |
+| `repeat_in` | Integer from 1 to 60 — the number of `repeat_time_unit` intervals to wait before running again. |
+| `repeat_time_unit` | Unit for the repetition interval: `Minutes`, `Hours`, `Days`, or `Weeks`. |
+
+</Accordion>
+
+<Accordion title="Scope and extra inputs">
+
+| Field | Description |
+|---|---|
+| `target_port` | Restricts the scan to one specific port. When set, only that port's findings and URL are passed to tools. |
+| `wordlists` | One or more wordlists to supply to brute-force tools (Dirsearch, Gobuster). |
+| `input_technologies` | Technologies the auditor already knows about, injected as starting inputs for relevant configurations. |
+| `input_vulnerabilities` | Vulnerabilities the auditor already knows about, used to seed exploit-search configurations. |
+
+</Accordion>
+
+<Accordion title="Lifecycle timestamps">
+
+| Field | Description |
+|---|---|
+| `creation` | Set automatically when the task record is created. |
+| `enqueued_at` | Set when the task is pushed onto the RQ/Valkey queue. |
+| `start` | Set when the first execution of the task begins. |
+| `end` | Set when the last execution finishes. |
+| `rq_job_id` | The RQ job identifier; used to cancel a scheduled task before it starts. |
+
+</Accordion>
+
+---
+
+## Scheduling and repetition
+
+By default, a task runs immediately when you create it. Set `scheduled_at` to a future datetime to delay the start:
+
+```json
+{
+  "target": 1,
+  "process": 3,
+  "intensity": 3,
+  "scheduled_at": "2025-09-01T08:00:00Z"
+}
+```
+
+To run a task on a repeating schedule, combine `repeat_in` and `repeat_time_unit`. Valid time units are defined by the `TimeUnit` enum:
+
+| Value | Description |
+|---|---|
+| `Minutes` | Repeat every N minutes (1–60) |
+| `Hours` | Repeat every N hours (1–60) |
+| `Days` | Repeat every N days (1–60) |
+| `Weeks` | Repeat every N weeks (1–60) |
+
+For example, to scan a target every seven days starting immediately:
+
+```json
+{
+  "target": 1,
+  "process": 3,
+  "intensity": 3,
+  "repeat_in": 7,
+  "repeat_time_unit": "Days"
+}
+```
+
+After each run completes, Rekono automatically creates the next task at the correct future time, preserving all parameters — target, process, intensity, wordlists, and scope — so recurring scans are truly hands-off.
+
+<Info>
+  Combining `scheduled_at` with `repeat_in` / `repeat_time_unit` creates a recurring scan that starts at a specific time. The first run happens at `scheduled_at`; subsequent runs are offset from each completed run by the repetition interval.
+</Info>
+
+---
+
+## Task lifecycle
+
+A task moves through the following states from creation to completion:
+
+<Steps>
+  <Step title="Created">
+    The task record is saved in the database. If `scheduled_at` is set, the task waits here until the scheduled time arrives.
+  </Step>
+  <Step title="Enqueued">
+    Rekono pushes the task onto the RQ queue in Valkey. The `enqueued_at` timestamp is recorded. The task can still be cancelled by its `rq_job_id` at this point.
+  </Step>
+  <Step title="Started">
+    A worker picks up the task. The `start` timestamp is set. The scheduler begins evaluating which steps (or the single configuration) are ready to run based on stage order and available findings.
+  </Step>
+  <Step title="Executions running">
+    Individual tool executions are launched as findings become available. Each execution runs inside a worker container, parses its output into findings, and reports them back. New executions are triggered as their input prerequisites are met.
+  </Step>
+  <Step title="Completed">
+    All executions have finished. The `end` timestamp is set. If the task has a repetition schedule, the next task is created automatically.
+  </Step>
+</Steps>
+
+<Tip>
+  Scale the number of execution workers to control how many tools run in parallel. A single worker processes one execution at a time. With five workers, up to five tool configurations can run simultaneously within the same task:
+
+  ```bash
+  docker compose up -d --scale executions-worker=5
+  ```
+
+  The optimal count depends on the target's bandwidth tolerance and the intensity level you've chosen. For aggressive scans against robust targets, values of 5–10 are common.
+</Tip>

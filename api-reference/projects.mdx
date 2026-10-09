@@ -1,0 +1,324 @@
+---
+title: 'REST API Endpoints for Projects'
+sidebarTitle: 'Projects'
+description: 'Manage security engagement projects via the Rekono API; list, create, update, and delete projects and retrieve top projects by finding count.'
+---
+
+Rekono organizes every security assessment inside a **Project** — a workspace that groups targets, tasks, and findings together. This page documents every REST endpoint available for the `Project` resource, including how to create projects, manage their members, and surface the most active ones through the top-projects ranking.
+
+<Note>
+All endpoints require a valid Bearer token in the `Authorization` header. Authenticated users only see projects they belong to as members. Only the project owner can remove other members, and the owner can never be removed from their own project.
+</Note>
+
+---
+
+## List Projects
+
+Retrieve a paginated list of all projects the authenticated user is a member of. Supports full-text search over `name`, `description`, and `targets__target`, plus filtering and ordering by `id`, `name`, and `owner`.
+
+```
+GET /api/projects/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search across project name, description, and the target values
+  defined inside the project.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort field. Prefix with `-` for descending order. Allowed values: `id`,
+  `name`, `owner`.
+</ParamField>
+
+<ParamField query="page" type="integer">
+  Page number for paginated results.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/projects/?ordering=-id"
+```
+
+**Response — 200 OK**
+
+```json
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 3,
+      "name": "External Attack Surface Q3",
+      "description": "Quarterly assessment of external perimeter",
+      "owner": { "id": 1, "username": "alice" },
+      "targets": [7, 8],
+      "members": [1, 2],
+      "tags": ["quarterly", "external"],
+      "defectdojo_sync": null
+    }
+  ]
+}
+```
+
+---
+
+## Create a Project
+
+Create a new project. The requesting user is automatically set as the `owner` and added as the first member. A trending-CVE alert is created and enabled for the project immediately.
+
+```
+POST /api/projects/
+```
+
+**Request Body**
+
+<ParamField body="name" type="string" required>
+  Unique name of the project across the whole platform. Maximum 100 characters.
+  Must match the `NAME` regex (alphanumerics, spaces, hyphens, underscores, and
+  dots).
+</ParamField>
+
+<ParamField body="description" type="string" required>
+  Human-readable description of the assessment. Maximum 300 characters.
+</ParamField>
+
+<ParamField body="tags" type="array of strings">
+  Labels that help organize projects. Provided as a JSON array of tag name
+  strings, e.g. `["web", "internal"]`.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Corp Web Pentest", "description": "Full pentest of corp web apps", "tags": ["web", "external"]}' \
+  "https://rekono.example.com/api/projects/"
+```
+
+**Response — 201 Created**
+
+<ResponseField name="id" type="integer">
+  Auto-assigned primary key of the new project.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Name of the project as provided.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Description of the project as provided.
+</ResponseField>
+
+<ResponseField name="owner" type="object">
+  Serialized user object of the creator (`id`, `username`).
+</ResponseField>
+
+<ResponseField name="targets" type="array of integers">
+  IDs of targets associated with the project. Empty on creation.
+</ResponseField>
+
+<ResponseField name="members" type="array of integers">
+  IDs of project members. Initially contains only the owner's ID.
+</ResponseField>
+
+<ResponseField name="tags" type="array of strings">
+  Tags assigned to the project.
+</ResponseField>
+
+<ResponseField name="defectdojo_sync" type="object or null">
+  DefectDojo synchronization status, if configured. `null` when not set up.
+</ResponseField>
+
+---
+
+## Get a Project
+
+Retrieve the full details of a single project by its ID.
+
+```
+GET /api/projects/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the project to retrieve.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/projects/3/"
+```
+
+**Response — 200 OK** returns the same fields as [Create a Project](#create-a-project).
+
+---
+
+## Update a Project
+
+Replace the editable fields of an existing project. Ownership and membership are managed through the dedicated members sub-endpoint, not here.
+
+```
+PUT /api/projects/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the project to update.
+</ParamField>
+
+**Request Body** — same writable fields as [Create a Project](#create-a-project): `name`, `description`, `tags`.
+
+**Example**
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Corp Web Pentest 2025", "description": "Updated scope", "tags": ["web", "2025"]}' \
+  "https://rekono.example.com/api/projects/3/"
+```
+
+**Response — 200 OK** returns the updated project object.
+
+---
+
+## Delete a Project
+
+Permanently delete a project. Cascades to all targets, tasks, executions, and findings belonging to it.
+
+```
+DELETE /api/projects/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the project to delete.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/projects/3/"
+```
+
+**Response — 204 No Content**
+
+---
+
+## Manage Project Members
+
+Add or remove a user from a project's member list. When a member is added they are automatically subscribed to all alerts that have `subscribe_all_members` enabled. When removed they are unsubscribed from every alert in the project.
+
+<Warning>
+The project owner (`owner`) can never be removed from their own project. Attempting to do so returns `400 Bad Request`.
+</Warning>
+
+```
+POST   /api/projects/{id}/members/{member_id}/
+DELETE /api/projects/{id}/members/{member_id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the project.
+</ParamField>
+
+<ParamField path="member_id" type="integer" required>
+  Primary key of the user to add or remove.
+</ParamField>
+
+**Examples**
+
+```bash
+# Add member
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/projects/3/members/5/"
+
+# Remove member
+curl -s -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/projects/3/members/5/"
+```
+
+**Response — 204 No Content** on success.
+
+---
+
+## Top Projects
+
+Return projects ranked by their current attack surface exposure. Projects are sorted primarily by unresolved vulnerability count, then by live host count, task count, and target count as tiebreakers.
+
+<Info>
+Fixed findings and false-positive vulnerabilities are excluded from the ranking so remediation work immediately improves a project's position.
+</Info>
+
+```
+GET /api/projects/top/
+```
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/projects/top/"
+```
+
+**Response — 200 OK**
+
+<ResponseField name="id" type="integer">
+  Primary key of the project.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Name of the project.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Description of the project.
+</ResponseField>
+
+<ResponseField name="owner" type="object">
+  Serialized owner user object.
+</ResponseField>
+
+<ResponseField name="targets" type="array of integers">
+  IDs of the targets in this project.
+</ResponseField>
+
+<ResponseField name="members" type="array of integers">
+  IDs of project members.
+</ResponseField>
+
+<ResponseField name="tags" type="array of strings">
+  Tags attached to the project.
+</ResponseField>
+
+<ResponseField name="defectdojo_sync" type="object or null">
+  DefectDojo synchronization details when configured.
+</ResponseField>
+
+```json
+[
+  {
+    "id": 1,
+    "name": "External Perimeter",
+    "description": "Quarterly external perimeter assessment",
+    "owner": { "id": 1, "username": "alice" },
+    "targets": [1, 2, 3],
+    "members": [1, 2, 4],
+    "tags": ["external", "quarterly"],
+    "defectdojo_sync": null
+  }
+]
+```

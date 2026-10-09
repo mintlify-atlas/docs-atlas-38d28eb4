@@ -1,47 +1,142 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: 'Get Started with Rekono in Minutes'
+sidebarTitle: 'Quickstart'
+description: 'Deploy Rekono with Docker Compose, create your first project, add a target, and launch an automated scan — a complete end-to-end walkthrough.'
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+Rekono ships as a fully self-contained Docker Compose stack. This quickstart walks you through cloning the repository, starting all services, logging in, creating a project, adding a target, launching your first automated scan, and reviewing the findings that come back.
 
 ## Prerequisites
 
-Before you begin, you must have:
+Before you begin, make sure your machine has:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+- **Docker** and **Docker Compose** (v2 — the `docker compose` plugin, not the legacy `docker-compose`)
+- **~4 GB of available RAM** — the stack runs PostgreSQL, Valkey, a Django backend, several RQ workers, the hacking-tool worker image, and an Nginx reverse proxy
+- **At least 1 CPU core** — more cores let you scale the executions worker for parallelism
 
-## Get started
+<Note>
+  The default superuser credentials are `rekono` / `rekono`. **Change the password immediately after your first login.** See the [environment variable overrides](#override-default-credentials) below if you want to set different credentials before the first boot.
+</Note>
+
+## Steps
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Clone the repository and start the stack">
+    Clone Rekono from GitHub, enter the directory, and bring up all services. Scale the `executions-worker` to 5 replicas so multiple tool executions can run in parallel.
 
     ```bash
-    npm install your-package
+    git clone https://github.com/pablosnt/rekono
+    cd rekono
+    docker compose up -d --scale executions-worker=5
     ```
+
+    Docker pulls the images on first run and then starts every service in the correct dependency order. The `initializer` container runs database migrations and seeds the tool catalog before the workers come up, so the stack is fully ready once the `nginx` container reports healthy.
+
+    You can follow progress with:
+
+    ```bash
+    docker compose logs -f
+    ```
+
+
+    <Tip>
+      Scaling `executions-worker` beyond 1 is strongly recommended. Each replica picks jobs from the `executions` RQ queue independently, so 5 workers can run 5 tools in parallel across your tasks. You can scale up further at any time with `docker compose up -d --scale executions-worker=10` while the stack is running.
+    </Tip>
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
-    ```
+  <Step title="Log in and change the default password">
+    Open [https://127.0.0.1](https://127.0.0.1) in your browser. Nginx terminates TLS with a self-signed certificate generated on first boot, so accept the browser warning.
+
+    Log in with the default superuser credentials:
+
+    | Field | Default value |
+    |---|---|
+    | Username | `rekono` |
+    | Password | `rekono` |
+
+    After login, navigate to your profile settings and **change the password before you do anything else**. The default credentials are publicly known and the platform has privileged access to every target you add.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
-    ```
+  <Step title="Create a project">
+    Projects are the top-level containers for an engagement. All targets, tasks, executions, findings, notes, and reports live inside a project.
+
+    1. Click **Projects** in the sidebar.
+    2. Click **New Project**.
+    3. Give the project a name (e.g. `Example Engagement`) and an optional description.
+    4. Set the desired member roles if you are working in a team.
+    5. Click **Create**.
+
+    You can have as many projects as you need — one per client engagement, one per internal asset, or however you prefer to organize your work.
+  </Step>
+
+  <Step title="Add a target">
+    A target tells Rekono what to scan. Rekono accepts four target types:
+
+    | Type | Example |
+    |---|---|
+    | Domain | `example.com` |
+    | IP address | `192.168.1.10` |
+    | CIDR range | `10.0.0.0/24` |
+    | URL | `https://example.com/app` |
+
+    Inside your project:
+
+    1. Click **Targets** → **New Target**.
+    2. Enter the target value.
+    3. Optionally pre-define specific ports to scope the scan (e.g. `443`, `8080`).
+    4. Click **Save**.
+  </Step>
+
+  <Step title="Launch a task">
+    A task ties a target to either a full **Process** (an ordered chain of tool configurations covering multiple assessment stages) or a single **Configuration** (one specific thing a tool can do).
+
+    1. Open the target you just created.
+    2. Click **New Task**.
+    3. Choose whether to run a **Process** or a single **Configuration**:
+       - A *Process* chains tools automatically through the pipeline stages — OSINT → Enumeration → Vulnerabilities → Services → Exploitation.
+       - A *Configuration* runs one specific tool action, useful when you already know what you need.
+    4. Set the **Intensity** level: `SNEAKY`, `LOW`, `NORMAL`, `HARD`, or `INSANE`. This controls how aggressive the underlying tool arguments are — stealthier intensities are quieter but slower; higher intensities are faster but noisier.
+    5. Optionally schedule the task for a future time or configure a repeat interval (e.g. every 7 days).
+    6. Click **Launch**.
+
+    Rekono enqueues the task immediately. The `tasks-worker` schedules the individual tool executions, and the `executions-worker` replicas pick them up and run the tools.
+  </Step>
+
+  <Step title="Review findings">
+    While the task runs you can watch progress in the **Executions** tab of the task. Each row shows the tool configuration, its current status (`REQUESTED`, `RUNNING`, `COMPLETED`, `ERROR`, or `SKIPPED`), and the executed command.
+
+    Once executions finish, findings appear in the **Findings** tab of the target. Findings are deduplicated — if three tools all report the same open port, it appears once. Each finding is:
+
+    - Linked to the host, port, or technology where it was discovered.
+    - Enriched with CVE data (severity, EPSS score, CVSS vector, remediation) when applicable.
+    - Flagged with a status you can set: **Confirmed**, **False Positive**, **Accepted**, or **Fixed**.
+
+    Use the filters to triage by type, severity, or status. Add notes directly on findings to record what you found and what you plan to do next.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Override Default Credentials
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+If you want to change the superuser username, email, or password before the first boot (before the `initializer` container runs), pass environment variables to `docker compose`:
+
+```bash
+RKN_USERNAME=admin \
+RKN_EMAIL=admin@example.com \
+RKN_PASSWORD=changeme123 \
+docker compose up -d --scale executions-worker=5
+```
+
+These variables are read by the `initializer` service, which maps them to the Django management command that creates the superuser:
+
+```yaml
+environment:
+  - DJANGO_SUPERUSER_EMAIL=${RKN_EMAIL:-rekono@rekono.dev}
+  - DJANGO_SUPERUSER_USERNAME=${RKN_USERNAME:-rekono}
+  - DJANGO_SUPERUSER_PASSWORD=${RKN_PASSWORD:-rekono}
+```
+
+The values shown are the compiled defaults from `docker-compose.yml`. Once the superuser is created by the initializer, these variables have no effect on subsequent `docker compose up` calls — use the UI to manage credentials after first boot.
+
+<Warning>
+  Never expose the Rekono UI directly to the public internet with the default credentials in place. Always change the password and restrict access to trusted networks or a VPN before pointing Rekono at any target.
+</Warning>

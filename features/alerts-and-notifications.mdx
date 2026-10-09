@@ -1,0 +1,126 @@
+---
+title: 'Alerts and Notifications for Security Findings'
+sidebarTitle: 'Alerts'
+description: 'Create rules that notify you by email or Telegram the moment a specific host, port, technology, or vulnerability appears in a project.'
+---
+
+Rekono's alert system lets you define fine-grained notification rules at the project level, so the right people are informed the instant a scan uncovers something relevant. Rather than filtering through every result yourself, you configure an alert for the finding type you care about — a new open port, an exposed credential, a known CVE — and let Rekono deliver the notification automatically through email or Telegram as soon as the finding is created.
+
+## What Is an Alert
+
+An `Alert` is a project-scoped rule that watches for a specific kind of finding and notifies a set of subscribers when one is discovered. Each alert targets exactly one finding type and can optionally filter on a particular value within that type — for example, alerting only when the CVE `CVE-2021-44228` appears, rather than for every CVE.
+
+The `Alert` model includes the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `project` | `Project` | The project whose findings the alert monitors. |
+| `item` | `AlertItem` | The kind of finding that triggers the alert. |
+| `value` | `str \| null` | Optional filter: only trigger when the relevant field matches this value (case-insensitive). |
+| `enabled` | `bool` | When `False`, the alert is silenced without being deleted. |
+| `subscribe_all_members` | `bool` | When `True`, new members added to the project are automatically subscribed. |
+| `owner` | `User \| null` | The user who created the alert. |
+| `subscribers` | `ManyToMany[User]` | Users who receive notifications when the alert fires. |
+
+Rekono enforces uniqueness: only one alert per `(project, item)` pair can exist without a value filter, and only one per `(project, item, value)` combination when a value is set.
+
+### AlertItem Values
+
+The `AlertItem` enum defines every finding type that can be watched:
+
+<CardGroup cols={2}>
+  <Card title="OSINT" icon="globe">
+    Any OSINT data found on public sources during passive reconnaissance.
+  </Card>
+  <Card title="Host" icon="server">
+    A host discovered by its IP address. Optionally filter by a specific IP.
+  </Card>
+  <Card title="Open Port" icon="door-open">
+    Any port whose status is `Open`. Optionally filter by port number.
+  </Card>
+  <Card title="Service" icon="network-wired">
+    Any port with a detected service. Optionally filter by service name (e.g. `http`).
+  </Card>
+  <Card title="Technology" icon="microchip">
+    A software technology detected on a port. Optionally filter by technology name.
+  </Card>
+  <Card title="Credential" icon="key">
+    An exposed email, username, or secret credential.
+  </Card>
+  <Card title="Vulnerability" icon="bug">
+    Any vulnerability finding, regardless of CVE or severity.
+  </Card>
+  <Card title="CVE" icon="triangle-exclamation">
+    A vulnerability with a known CVE identifier. Optionally filter by a specific CVE (e.g. `CVE-2021-44228`).
+  </Card>
+  <Card title="Trending CVE" icon="fire">
+    A CVE that CVE Crowd currently marks as trending. Fires even if the vulnerability was discovered earlier.
+  </Card>
+</CardGroup>
+
+## Creating an Alert
+
+<Steps>
+  <Step title="Pick a project">
+    Navigate to the project you want to monitor. Alerts are always scoped to a single project.
+  </Step>
+  <Step title="Choose the finding type">
+    Select an `AlertItem` value that matches what you want to watch — for example, `CVE` to track newly detected CVEs, or `Open Port` to be notified whenever a new port opens.
+  </Step>
+  <Step title="Set an optional value filter">
+    If you only care about a specific finding — for example, the CVE `CVE-2021-44228` or the service `ssh` — enter that value in the `value` field. Leave it empty to receive alerts for every instance of that finding type.
+  </Step>
+  <Step title="Configure subscribers">
+    Choose the users who should receive the notification. You can also enable `subscribe_all_members` so that anyone added to the project in the future is automatically subscribed without you having to update the alert manually.
+  </Step>
+  <Step title="Save the alert">
+    The alert is enabled by default. You can disable it at any time by setting `enabled = false` without losing your configuration.
+  </Step>
+</Steps>
+
+You can also create alerts directly via the API:
+
+```bash
+POST /api/alerts/
+Content-Type: application/json
+
+{
+  "project": 1,
+  "item": "CVE",
+  "value": "CVE-2021-44228",
+  "enabled": true,
+  "subscribe_all_members": false
+}
+```
+
+## Notification Channels
+
+Rekono delivers alert notifications through two channels that share the same alert configuration:
+
+<Tabs>
+  <Tab title="Email (SMTP)">
+    When an alert fires, Rekono sends an email to every subscriber using the SMTP settings configured in the platform. The message includes the finding type, the project name, and the key fields of the finding that triggered the alert.
+
+    SMTP is configured by an administrator in the platform settings. It supports standard SMTP with optional TLS and authentication credentials.
+  </Tab>
+  <Tab title="Telegram Bot">
+    If a subscriber has linked their Telegram account to their Rekono profile, alert notifications are also delivered as Telegram messages. Each message includes finding-specific details using the bot's Markdown templates — for example, a vulnerability alert shows the CVE, severity, CVSS score, EPSS score, and a link to the scan.
+
+    The Telegram and email channels are not mutually exclusive — a subscriber with both configured receives the notification through both.
+  </Tab>
+</Tabs>
+
+## Subscribing Members
+
+The `subscribe_all_members` flag automates subscriber management at the project level:
+
+- **`subscribe_all_members = true`**: Every user added to the project is automatically subscribed to the alert. This is useful for security-critical alerts where the whole team must stay informed without requiring manual updates every time someone joins the project.
+- **`subscribe_all_members = false`**: Only the users explicitly listed in `subscribers` receive notifications. Use this for narrower alerts that are only relevant to specific team members.
+
+Subscribers can be added or removed at any time through the `subscribers` many-to-many relationship without recreating the alert.
+
+<Note>
+Alerts only fire on **new** findings — the first time a finding is discovered by a scan. If the same finding is detected again in a subsequent execution, the alert does not fire a second time. The only exception is `Trending CVE`, which fires whenever a previously recorded CVE starts trending, regardless of when it was originally discovered.
+
+Additionally, findings that are already fixed, created from user input, or marked as `False Positive` never trigger an alert.
+</Note>

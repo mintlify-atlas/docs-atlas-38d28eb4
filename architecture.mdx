@@ -1,0 +1,242 @@
+---
+title: 'How Rekono Works: Architecture Overview'
+sidebarTitle: 'Architecture'
+description: "Understand how Rekono's Docker services, RQ worker queues, and tool-chaining pipeline fit together to automate reconnaissance end-to-end."
+---
+
+Rekono is composed of several cooperating Docker services that communicate over two isolated networks. The frontend delivers the UI, the backend exposes the REST API, four specialized RQ worker types handle the asynchronous pipeline, and Nginx ties it all together. This page explains each service, how the worker queues are structured, how findings from one tool become inputs for the next, and how data moves through the system from target definition to enriched finding.
+
+## Services
+
+Rekono's Docker Compose stack defines the following services:
+
+<Accordion title="postgres — Relational database">
+  **Image**: `postgres:18-bookworm`
+
+  PostgreSQL 18 is the persistent store for every Rekono entity: projects, targets, tasks, executions, findings, users, tool definitions, process definitions, alerts, and audit data. It is exposed only on the `internal` network (port `5432`) and is never reachable from outside the Docker stack. A named volume (`postgres_18`) persists data across container restarts.
+
+  Health is checked with `pg_isready` every 5 seconds. All other services that need the database wait for this health check before starting.
+</Accordion>
+
+<Accordion title="valkey — Job queue broker">
+  **Image**: `valkey/valkey:8-bookworm`
+
+  Valkey is a Redis-compatible key-value store used exclusively as the RQ (Redis Queue) broker. Every asynchronous job — scheduled tasks, tool executions, finding processing, and monitoring — is enqueued here and dequeued by the appropriate worker. Valkey is exposed only on the `internal` network (port `6379`).
+
+  Health is checked with `valkey-cli ping` every 5 seconds.
+</Accordion>
+
+<Accordion title="initializer — Bootstrap and migrations">
+  **Image**: `pablosnt/rekono-worker:latest`
+
+  The initializer runs once on startup (`restart: 'no'`). It applies Django database migrations, seeds the tool catalog and input type fixtures, and creates the initial superuser account from the `RKN_USERNAME`, `RKN_EMAIL`, and `RKN_PASSWORD` environment variables. All other services depend on `initializer` completing successfully before they start.
+</Accordion>
+
+<Accordion title="rekono-upgrade — Legacy data migration">
+  **Image**: `postgres:14.2-alpine`
+
+  Also a one-shot container (`restart: 'no'`), this service handles in-place migrations from Rekono 1.x. It copies data from the old PostgreSQL 14 volume and migrates TLS certificates from the legacy Nginx layout. It runs before the initializer and is a no-op on fresh installations.
+</Accordion>
+
+<Accordion title="tasks-worker — Task scheduling">
+  **Image**: `pablosnt/rekono-backend:latest`
+
+  **Command**: `uv run --no-dev manage.py rqworker tasks --with-scheduler`
+
+  The tasks worker processes the `tasks` RQ queue and runs the RQ scheduler. When a task is created it is enqueued here. The tasks worker determines which tool configurations need to run for that task (either all configurations in a process, or the single chosen configuration), resolves which inputs are available from previous executions, and enqueues individual execution jobs onto the `executions` queue. The `--with-scheduler` flag enables cron-style scheduling for repeating and scheduled tasks.
+
+  This service connects to both the `internal` and `external` Docker networks because it may need to resolve external hostnames when building execution arguments.
+</Accordion>
+
+<Accordion title="executions-worker — Tool execution">
+  **Image**: `pablosnt/rekono-worker:latest`
+
+  **Command**: `bash /entrypoints/executions-worker.sh`
+
+  The executions worker picks jobs from the `executions` RQ queue and actually runs the hacking tools. It uses the `pablosnt/rekono-worker` image, which bundles all 19 supported tools alongside the Python worker code.
+
+  This service requires elevated network capabilities (`NET_ADMIN`, `NET_RAW`, `NET_BIND_SERVICE`) because some tools (notably Nmap) need raw socket access to perform their scans. It is attached to both `internal` and `external` networks so the tools can reach scan targets.
+
+  **Scaling**: This is the only service you should scale horizontally. Running multiple replicas (`--scale executions-worker=5`) allows Rekono to run several tool executions in parallel, dramatically reducing end-to-end task time.
+</Accordion>
+
+<Accordion title="findings-worker — Output parsing and deduplication">
+  **Image**: `pablosnt/rekono-backend:latest`
+
+  **Command**: `uv run --no-dev manage.py rqworker findings`
+
+  After an execution completes, the executions worker enqueues a job on the `findings` queue. The findings worker parses the tool's output file or stdout, converts raw output into structured finding objects, deduplicates them against existing findings, enriches CVEs with external data sources (NVD, EPSS, OSV, GHSA, VulnCheck, CVE Crowd), evaluates alert rules, and sends notifications where configured.
+</Accordion>
+
+<Accordion title="monitor-worker — Health and monitoring">
+  **Image**: `pablosnt/rekono-backend:latest`
+
+  **Command**: `uv run --no-dev manage.py rqworker monitor --with-scheduler`
+
+  The monitor worker processes the `monitor` RQ queue and runs a periodic scheduler. It handles health checks, cleans up orphaned executions (jobs that are in a running state but whose RQ job no longer exists), and triggers any other background housekeeping that needs to run on a schedule independently of user-initiated tasks.
+</Accordion>
+
+<Accordion title="telegram-bot — Mobile interface">
+  **Image**: `pablosnt/rekono-backend:latest`
+
+  **Command**: `uv run --no-dev manage.py telegram_bot`
+
+  A long-running Django management command that connects to the Telegram Bot API. Authenticated users can use it to list their projects, launch tasks against targets, and receive push notifications for execution completions and alert triggers — all from a Telegram chat. The bot shares the same database and configuration as the backend.
+</Accordion>
+
+<Accordion title="backend — REST API">
+  **Image**: `pablosnt/rekono-backend:latest`
+
+  **Command**: `sh /entrypoints/deploy-backend.sh`
+
+  The Django REST Framework application that serves the REST API on port `8000` (exposed only to the `internal` network). It provides all CRUD endpoints for projects, targets, tasks, findings, users, processes, wordlists, and more. The OpenAPI schema and interactive Swagger UI are available at `/api/schema/swagger-ui/`.
+
+  The backend health check verifies that the Swagger UI is reachable before Nginx is allowed to start routing traffic to it.
+</Accordion>
+
+<Accordion title="frontend — Web UI">
+  **Image**: `pablosnt/rekono-frontend:latest`
+
+  A Nuxt (Vue/TypeScript) server-side rendered application served on port `3000` (internal only). It provides the full platform UI — dashboards, project and target management, task launching, finding triage, metrics, and reporting.
+</Accordion>
+
+<Accordion title="nginx — Reverse proxy and TLS termination">
+  **Image**: `pablosnt/rekono-nginx:latest`
+
+  **Ports**: `80:80` and `443:443` (the only service with published ports)
+
+  Nginx terminates HTTPS, redirects HTTP to HTTPS, and proxies requests to either the `frontend` (UI routes) or the `backend` (API routes). TLS certificates are auto-generated on first boot and stored in the `nginx` named volume. Nginx depends on both `backend` and `frontend` being healthy before it starts.
+</Accordion>
+
+## Worker Queues
+
+Rekono uses four RQ (Redis Queue) queues backed by Valkey. Each queue has a dedicated worker type so that slow or resource-intensive operations never block faster ones:
+
+| Queue | Worker service | Purpose |
+|---|---|---|
+| `tasks` | `tasks-worker` | Receives new task requests, resolves execution order from process definitions, enqueues individual tool executions, and manages the repeating/scheduled task schedule. |
+| `executions` | `executions-worker` | Receives individual tool execution jobs, builds the command from available findings and arguments, runs the tool binary, and enqueues the result for parsing. |
+| `findings` | `findings-worker` | Receives completed execution results, parses tool output into structured findings, deduplicates, enriches with external intelligence, evaluates alerts, and fires notifications. |
+| `monitor` | `monitor-worker` | Receives periodic health-check and housekeeping jobs, reconciles orphaned executions, and handles any background maintenance tasks. |
+
+<Info>
+  Only the `executions` queue benefits from horizontal scaling. The `tasks`, `findings`, and `monitor` queues are intentionally single-worker to avoid concurrency issues in scheduling and finding deduplication logic.
+</Info>
+
+## Tool Chaining Pipeline
+
+The tool-chaining mechanism is the core of what makes Rekono more than a script wrapper. It is built on three Django models: `Configuration`, `Argument`/`Input`, and `Output`, all defined in `backend/tools/models.py`.
+
+**How it works:**
+
+Each `Tool` has one or more `Configuration` objects. A configuration represents one specific thing a tool can do (e.g. "Nmap TCP SYN scan", "Gobuster directory brute-force"). Every configuration declares:
+
+- Its **`Stage`** — the phase of the assessment it belongs to.
+- Its **`Argument`** objects — the CLI arguments the command accepts, each with a placeholder.
+- The **`Input`** types that can fill each argument — e.g. `Port`, `Host`, `Path`, `Technology`, `Vulnerability`.
+- The **`Output`** types it produces — e.g. a Nmap configuration outputs `Host` and `Port` findings.
+
+The `Stage` enum (`backend/tools/enums.py`) defines the ordered pipeline phases:
+
+```python
+class Stage(models.IntegerChoices):
+    OSINT = 1          # Public data gathering (theHarvester, EmailHarvester)
+    ENUMERATION = 2    # Host, port, and service discovery (Nmap)
+    VULNERABILITIES = 3  # Vulnerability scanning (Nuclei, Nikto, OWASP ZAP)
+    SERVICES = 4       # Deep service testing (Dirsearch, SSLyze, SSH Audit, SMBMap…)
+    EXPLOITATION = 5   # Exploit search (SearchSploit, Metasploit)
+```
+
+The `InputTypeName` enum (`backend/input_types/enums.py`) defines all data types that flow between tools:
+
+```python
+class InputTypeName(TextChoices):
+    OSINT = "OSINT"
+    HOST = "Host"
+    PORT = "Port"
+    PATH = "Path"
+    TECHNOLOGY = "Technology"
+    CREDENTIAL = "Credential"
+    VULNERABILITY = "Vulnerability"
+    EXPLOIT = "Exploit"
+    WORDLIST = "Wordlist"
+    AUTHENTICATION = "Authentication"
+    HTTP_HEADER = "Http Header"
+```
+
+When the `tasks-worker` processes a task that runs a process, it walks the process's configurations in stage order. For each configuration it checks whether the required `Input` types are satisfied by findings already in the database (produced by earlier-stage configurations in the same task). If the inputs are available, the execution is enqueued. If they are not yet available, the execution waits. This is how, for example, a Gobuster configuration automatically receives the `Path` and `Port` findings that Nmap produced, without any user intervention.
+
+The `Output` model is what closes the loop: each configuration declares the `InputType` values it produces, so the scheduler knows exactly what data each tool makes available to the next one.
+
+## Data Flow
+
+<Steps>
+  <Step title="Target defined">
+    A user creates a `Target` (domain, IP, CIDR, or URL) inside a project, optionally pre-seeding specific `TargetPort` entries to scope the scan.
+  </Step>
+  <Step title="Task created">
+    The user creates a `Task` that references the target and either a `Process` (multi-tool chain) or a single `Configuration`. The task records the chosen `Intensity`, optional schedule, and any wordlists, input technologies, or input vulnerabilities supplied by the user.
+  </Step>
+  <Step title="Tasks-worker schedules executions">
+    The `tasks-worker` dequeues the task job, resolves which configurations need to run and in what order based on `Stage` and `Input`/`Output` declarations, and enqueues `Execution` jobs onto the `executions` queue — either immediately or after waiting for prerequisite executions to complete and produce the required input types.
+  </Step>
+  <Step title="Executions-worker runs tools">
+    Each `executions-worker` replica picks an `Execution` job, resolves the actual `Input` values from findings already in the database (with target ports as a fallback when no findings exist yet), builds the full CLI command from the configuration's `command_template`, runs the binary, and captures the output file and/or stdout. On completion it calls `execution.completed(hash)` and enqueues a findings job.
+  </Step>
+  <Step title="Findings-worker processes results">
+    The `findings-worker` dequeues the findings job, invokes the tool's `parser_class` to convert raw output into structured `Finding` objects, and deduplicates them against existing findings using the execution hash. Duplicate findings are not created; instead, the existing finding's last-seen timestamp and linked executions are updated.
+  </Step>
+  <Step title="Findings stored and enriched">
+    New findings are persisted to PostgreSQL and attached to the correct host, port, or technology. CVEs are enriched asynchronously from NVD, EPSS, OSV, GHSA, VulnCheck, and CVE Crowd. HackTricks links are resolved and attached. VirusTotal reputation data is fetched for newly discovered hosts.
+  </Step>
+  <Step title="Alerts triggered">
+    The findings worker evaluates all alert rules defined in the project against each new finding. Matching alerts fire notifications — email via SMTP and/or Telegram messages — to the configured recipients. The `monitor-worker` separately handles any scheduled monitoring jobs that watch for finding state changes (e.g. a previously confirmed vulnerability that is no longer detected is automatically marked as fixed).
+  </Step>
+</Steps>
+
+## Storage
+
+| Store | Technology | Purpose |
+|---|---|---|
+| **Persistent data** | PostgreSQL 18 (`postgres_18` volume) | All application data: projects, targets, tasks, executions, findings, users, processes, tool definitions, alerts |
+| **Job queues** | Valkey 8 (Redis-compatible, in-memory) | RQ job queues for `tasks`, `executions`, `findings`, and `monitor` workers |
+| **Rekono home** | `rekono` named volume | Shared filesystem mounted by the backend, workers, and initializer for output files, configuration, and tool artifacts |
+| **TLS certificates** | `nginx` named volume | Self-signed TLS certificate and key generated by Nginx on first boot |
+| **Wordlists** | `wordlists_seclists` and `wordlists_dirb` volumes | SecLists and dirb wordlists used by enumeration tools like Dirsearch and Gobuster |
+
+## Network Topology
+
+Rekono defines two Docker networks to isolate traffic:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  external network (bridge, internet-accessible)             │
+│                                                             │
+│   nginx ──────────────────── internet / host port 80/443   │
+│   tasks-worker                                              │
+│   executions-worker   (tools reach scan targets here)       │
+│   findings-worker                                           │
+│   monitor-worker                                            │
+│   telegram-bot                                              │
+│   backend                                                   │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  internal network (bridge, no external routing)             │
+│                                                             │
+│   postgres        ← all services                           │
+│   valkey          ← all services                           │
+│   backend :8000   ← nginx                                  │
+│   frontend :3000  ← nginx                                  │
+│   initializer                                               │
+│   rekono-upgrade                                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**`internal`** is a fully isolated Docker bridge network with no outbound internet routing. PostgreSQL, Valkey, the backend API, and the frontend are all internal-only, reachable only by other containers in the stack.
+
+**`external`** is a standard Docker bridge network with outbound internet access. Services that need to reach scan targets (the tool workers) or external APIs (CVE enrichment, Telegram) are attached to this network. Nginx is the only service that publishes ports to the host (`80` and `443`), making it the single entry point for all user traffic.
+
+<Info>
+  The `executions-worker` is attached to the `external` network so that the hacking tools it runs can reach their scan targets. If you need to scan internal-only hosts accessible from the Docker host machine, the `host.docker.internal:host-gateway` extra host entry (present on all worker services) lets containers resolve and reach the Docker host's network interfaces.
+</Info>

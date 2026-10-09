@@ -1,0 +1,656 @@
+---
+title: 'REST API Endpoints for Findings'
+sidebarTitle: 'Findings'
+description: "Query all finding types — OSINT, hosts, ports, paths, technologies, vulnerabilities, credentials, and exploits — from Rekono's REST API."
+---
+
+Rekono **Findings** are the intelligence produced by tool executions. They are organized in a chain that mirrors the stages of an assessment: OSINT data feeds host discovery, hosts expose ports, ports surface paths and technologies, and technologies lead to vulnerabilities and exploits. This page documents the REST endpoints for each finding type, their response fields, and how to triage or fix a finding.
+
+<Note>
+All endpoints require a valid Bearer token. Findings are always read-only through listing; they are created by tool executions. Triage fields (`triage_status`, `triage_comment`) can be updated via `PATCH` on the individual finding endpoints for finding types that support triage.
+</Note>
+
+---
+
+## Common Fields
+
+All finding types share a base set of fields returned in every response.
+
+<ResponseField name="id" type="integer">
+  Primary key of the finding.
+</ResponseField>
+
+<ResponseField name="project" type="integer">
+  ID of the project the finding belongs to, resolved from the execution chain.
+</ResponseField>
+
+<ResponseField name="executions" type="array of objects">
+  List of simplified execution objects that reported this finding. Each object
+  contains `id`, `task`, `configuration`, `status`, `start`, `end`, and
+  `defectdojo_test_id`.
+</ResponseField>
+
+<ResponseField name="is_fixed" type="boolean">
+  Whether the finding has been marked as remediated.
+</ResponseField>
+
+<ResponseField name="auto_fixed" type="boolean">
+  Whether Rekono automatically marked it fixed (e.g. no longer detected by the
+  same executions, or its parent finding was fixed).
+</ResponseField>
+
+<ResponseField name="fixed_date" type="string or null (ISO 8601)">
+  Timestamp when the finding was fixed.
+</ResponseField>
+
+<ResponseField name="fixed_by" type="object or null">
+  Simplified user object of who marked the finding fixed.
+</ResponseField>
+
+<ResponseField name="created_from_user_input" type="boolean">
+  Whether a user created this finding manually rather than via a tool execution.
+</ResponseField>
+
+<ResponseField name="notes" type="array">
+  Analyst notes attached to the finding.
+</ResponseField>
+
+**Triageable findings** (OSINT, Credential, Vulnerability, Exploit) additionally include:
+
+<ResponseField name="triage_status" type="string">
+  Review conclusion. One of: `Untriaged`, `True Positive`, `False Positive`,
+  `Won't Fix`.
+</ResponseField>
+
+<ResponseField name="triage_comment" type="string or null">
+  Free-text note recorded during triage.
+</ResponseField>
+
+<ResponseField name="triage_date" type="string or null (ISO 8601)">
+  Timestamp when the finding was triaged.
+</ResponseField>
+
+<ResponseField name="triage_by" type="object or null">
+  Simplified user object of who triaged the finding.
+</ResponseField>
+
+---
+
+## Severity Enum
+
+Vulnerabilities carry a severity level. The API uses the textual name.
+
+| Name | Numeric | Description |
+|------|---------|-------------|
+| `Info` | `1` | Informational, no direct risk |
+| `Low` | `2` | Minor risk |
+| `Medium` | `3` | Moderate risk |
+| `High` | `4` | Significant risk |
+| `Critical` | `5` | Severe, requires immediate action |
+
+---
+
+## OSINT
+
+Passive reconnaissance data gathered from public sources.
+
+```
+GET /api/osint/
+GET /api/osint/{id}/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search on the `data` field.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `data`, `data_type`, `source`.
+</ParamField>
+
+**OSINT-specific Response Fields**
+
+<ResponseField name="data" type="string">
+  The discovered value — an IP, domain, URL, email, ASN, username, or password,
+  depending on `data_type`.
+</ResponseField>
+
+<ResponseField name="data_type" type="string">
+  What the data represents. One of: `IP`, `Domain`, `VHOST`, `URL`, `Email`,
+  `ASN`, `Username`, `Password`.
+</ResponseField>
+
+<ResponseField name="source" type="string or null">
+  The public source where the data was found (e.g. a certificate transparency
+  log or a DNS record).
+</ResponseField>
+
+### Promote OSINT to Target
+
+For `IP` or `Domain` findings you can create a scannable target directly from the OSINT data.
+
+```
+POST /api/osint/{id}/target/
+```
+
+<ParamField path="id" type="integer" required>
+  ID of the OSINT finding. Must have `data_type` of `IP` or `Domain`.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/osint/8/target/"
+```
+
+**Response — 201 Created** returns the newly created `Target` object. Returns `400 Bad Request` for data types that cannot be scanned (e.g. `Email`, `Username`).
+
+---
+
+## Hosts
+
+Network hosts discovered during enumeration, identified by their IP address.
+
+```
+GET /api/hosts/
+GET /api/hosts/{id}/
+GET /api/hosts/latest/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `ip`, `domain`, `os`, `country`, `city`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `ip`, `domain`, `os_type`, `country`, `city`.
+</ParamField>
+
+**Host-specific Response Fields**
+
+<ResponseField name="ip" type="string">
+  IPv4 or IPv6 address that identifies the host.
+</ResponseField>
+
+<ResponseField name="domain" type="string or null">
+  Domain name that resolves to this IP, if known.
+</ResponseField>
+
+<ResponseField name="os" type="string or null">
+  Operating system version string as reported by the tool.
+</ResponseField>
+
+<ResponseField name="os_type" type="string">
+  Operating system family. One of: `Linux`, `Windows`, `MacOS`, `iOS`,
+  `Android`, `Solaris`, `FreeBSD`, `Other`.
+</ResponseField>
+
+<ResponseField name="country" type="string or null">
+  Country where the IP is geolocated.
+</ResponseField>
+
+<ResponseField name="city" type="string or null">
+  City where the IP is geolocated.
+</ResponseField>
+
+<ResponseField name="latitude" type="number or null">
+  Latitude of the geolocation.
+</ResponseField>
+
+<ResponseField name="longitude" type="number or null">
+  Longitude of the geolocation.
+</ResponseField>
+
+<ResponseField name="reputation" type="integer or null">
+  VirusTotal reputation score (negative = malicious).
+</ResponseField>
+
+<ResponseField name="malicious_analysis" type="integer or null">
+  Number of VirusTotal engines that flagged the host as malicious.
+</ResponseField>
+
+<ResponseField name="suspicious_analysis" type="integer or null">
+  Number of VirusTotal engines that flagged the host as suspicious.
+</ResponseField>
+
+<ResponseField name="total_analysis" type="integer or null">
+  Total number of VirusTotal engines that analysed the host.
+</ResponseField>
+
+<ResponseField name="whois" type="string or null">
+  Raw WHOIS record for the IP address.
+</ResponseField>
+
+<ResponseField name="hacktricks_link" type="string or null">
+  Link to the HackTricks guide relevant to this host type.
+</ResponseField>
+
+<ResponseField name="port" type="array of integers">
+  IDs of Port findings discovered on this host.
+</ResponseField>
+
+<Info>
+`GET /api/hosts/latest/` returns non-fixed hosts ordered by the start timestamp of the most recent execution that reported them.
+</Info>
+
+---
+
+## Ports
+
+Open ports discovered on hosts, with service identification.
+
+```
+GET /api/ports/
+GET /api/ports/{id}/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `port` number and `service` name.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `host`, `port`, `status`, `protocol`, `service`.
+</ParamField>
+
+**Port-specific Response Fields**
+
+<ResponseField name="host" type="object">
+  Embedded simplified host object (`id`, `ip`, `domain`, `os`, `os_type`,
+  `country`, `city`, `latitude`, `longitude`, `reputation`,
+  `malicious_analysis`, `suspicious_analysis`, `total_analysis`, `whois`).
+</ResponseField>
+
+<ResponseField name="port" type="integer">
+  Port number (0–65535).
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Port state as reported by the scanner: `Open`, `Open - Filtered`,
+  `Filtered`, `Closed`, or `Closed - Filtered`.
+</ResponseField>
+
+<ResponseField name="protocol" type="string or null">
+  Transport protocol: `TCP` or `UDP`.
+</ResponseField>
+
+<ResponseField name="service" type="string or null">
+  Service banner or name identified on the port.
+</ResponseField>
+
+<ResponseField name="path" type="array of integers">
+  IDs of Path findings discovered under this port.
+</ResponseField>
+
+<ResponseField name="technology" type="array of integers">
+  IDs of Technology findings discovered on this port.
+</ResponseField>
+
+<ResponseField name="vulnerability" type="array of integers">
+  IDs of Vulnerability findings associated with this port directly.
+</ResponseField>
+
+---
+
+## Paths
+
+Web endpoints and file-share paths discovered on ports.
+
+```
+GET /api/paths/
+GET /api/paths/{id}/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `path` and `extra_info`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `port`, `port__host`, `port__port`, `path`, `status`,
+  `type`.
+</ParamField>
+
+**Path-specific Response Fields**
+
+<ResponseField name="port" type="object">
+  Embedded simplified port object.
+</ResponseField>
+
+<ResponseField name="path" type="string">
+  Location of the resource within the service (e.g. `/admin/login`).
+</ResponseField>
+
+<ResponseField name="status" type="integer or null">
+  HTTP status code returned for the path.
+</ResponseField>
+
+<ResponseField name="extra_info" type="string or null">
+  Additional data reported by the discovery tool.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Kind of resource: `Endpoint` (web path) or `Share` (file-sharing directory).
+</ResponseField>
+
+---
+
+## Technologies
+
+Software and frameworks detected running on ports.
+
+```
+GET /api/technologies/
+GET /api/technologies/{id}/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `name`, `version`, and `description`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `port`, `port__host`, `port__port`, `name`, `version`.
+</ParamField>
+
+**Technology-specific Response Fields**
+
+<ResponseField name="port" type="object">
+  Embedded simplified port object where the technology was found.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Technology name (e.g. `Apache httpd`, `OpenSSL`).
+</ResponseField>
+
+<ResponseField name="version" type="string or null">
+  Detected version string.
+</ResponseField>
+
+<ResponseField name="description" type="string or null">
+  Extra details reported by the identifying tool.
+</ResponseField>
+
+<ResponseField name="reference" type="string or null">
+  Link to the technology's documentation or vendor page.
+</ResponseField>
+
+<ResponseField name="hacktricks_link" type="string or null">
+  Link to the HackTricks guide for this technology.
+</ResponseField>
+
+<ResponseField name="credential" type="array of integers">
+  IDs of Credential findings found in this technology.
+</ResponseField>
+
+<ResponseField name="vulnerability" type="array of integers">
+  IDs of Vulnerability findings found in this technology.
+</ResponseField>
+
+<ResponseField name="exploit" type="array of integers">
+  IDs of Exploit findings targeting this technology.
+</ResponseField>
+
+---
+
+## Vulnerabilities
+
+Security weaknesses found in technologies or ports, enriched with CVE, CVSS, EPSS, and EUVD data.
+
+```
+GET /api/vulnerabilities/
+GET /api/vulnerabilities/{id}/
+GET /api/vulnerabilities/latest/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `name`, `description`, `cve`, `euvd_id`, `ghsa_id`,
+  `osv_generic_id`, and `cwes`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `technology`, `port`, `name`, `severity`,
+  `cvss_base_score`, `cve`, `euvd_id`, `ghsa_id`, `osv_generic_id`, `cwes`,
+  `epss_score`, `epss_percentile`.
+</ParamField>
+
+**Vulnerability-specific Response Fields**
+
+<ResponseField name="technology" type="object or null">
+  Embedded simplified technology where the vulnerability was found.
+</ResponseField>
+
+<ResponseField name="port" type="object or null">
+  Embedded simplified port, used when the technology is unknown.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Vulnerability name as reported by the discovering tool.
+</ResponseField>
+
+<ResponseField name="description" type="string or null">
+  Full description of the vulnerability and its impact.
+</ResponseField>
+
+<ResponseField name="severity" type="string">
+  Risk level. One of: `Info`, `Low`, `Medium`, `High`, `Critical`.
+</ResponseField>
+
+<ResponseField name="cvss_version" type="string or null">
+  CVSS version used for scoring, e.g. `3.1` or `4.0`.
+</ResponseField>
+
+<ResponseField name="cvss_vector" type="string or null">
+  Full CVSS vector string.
+</ResponseField>
+
+<ResponseField name="cvss_base_score" type="number or null">
+  CVSS base score (0.0–10.0).
+</ResponseField>
+
+<ResponseField name="cve" type="string or null">
+  CVE identifier, e.g. `CVE-2021-44228`.
+</ResponseField>
+
+<ResponseField name="euvd_id" type="string or null">
+  ENISA EUVD identifier.
+</ResponseField>
+
+<ResponseField name="ghsa_id" type="string or null">
+  GitHub Security Advisory identifier.
+</ResponseField>
+
+<ResponseField name="osv_generic_id" type="string or null">
+  OSV identifier for ecosystems without a dedicated ID format.
+</ResponseField>
+
+<ResponseField name="cwes" type="array of strings">
+  CWE identifiers of the underlying weaknesses, e.g. `["CWE-79"]`.
+</ResponseField>
+
+<ResponseField name="epss_score" type="number or null">
+  EPSS probability score (0.0–1.0) — likelihood of exploitation in 30 days.
+</ResponseField>
+
+<ResponseField name="epss_percentile" type="number or null">
+  Percentile position of the EPSS score among all scored CVEs.
+</ResponseField>
+
+<ResponseField name="remediation" type="string or null">
+  Steps to fix or mitigate the vulnerability.
+</ResponseField>
+
+<ResponseField name="reference" type="string or null">
+  Link to the advisory or vulnerability documentation.
+</ResponseField>
+
+<ResponseField name="trending" type="boolean">
+  Whether the vulnerability is currently trending in threat-intel feeds.
+</ResponseField>
+
+<ResponseField name="exploit" type="array of integers">
+  IDs of Exploit findings that target this vulnerability.
+</ResponseField>
+
+<Info>
+`GET /api/vulnerabilities/latest/` returns only non-fixed, non-false-positive, non-won't-fix vulnerabilities that were discovered by tool executions (not created manually), ordered by the most recent execution start time.
+</Info>
+
+**Full curl example — list vulnerabilities**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/vulnerabilities/?ordering=-cvss_base_score"
+```
+
+```json
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 101,
+      "project": 3,
+      "executions": [
+        {
+          "id": 15,
+          "task": 42,
+          "configuration": { "id": 5, "name": "Nuclei CVE", "tool": { "id": 9, "name": "Nuclei" } },
+          "status": "Completed",
+          "start": "2025-06-01T10:00:05Z",
+          "end": "2025-06-01T10:03:22Z",
+          "defectdojo_test_id": null
+        }
+      ],
+      "is_fixed": false,
+      "auto_fixed": false,
+      "fixed_date": null,
+      "fixed_by": null,
+      "created_from_user_input": false,
+      "notes": [],
+      "triage_status": "Untriaged",
+      "triage_comment": null,
+      "triage_date": null,
+      "triage_by": null,
+      "technology": { "id": 22, "port": { "id": 10, "host": { "id": 5, "ip": "93.184.216.34", "domain": "corp.example.com", "os": null, "os_type": "Other", "country": "US", "city": "Norwell", "latitude": 42.16, "longitude": -70.82, "reputation": null, "malicious_analysis": null, "suspicious_analysis": null, "total_analysis": null, "whois": null }, "port": 443, "status": "Open", "protocol": "TCP", "service": "https" }, "name": "Apache httpd", "version": "2.4.49", "description": null },
+      "port": null,
+      "name": "Path Traversal in Apache 2.4.49",
+      "description": "Apache HTTP Server 2.4.49 is vulnerable to path traversal.",
+      "severity": "Critical",
+      "cvss_version": "3.1",
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_base_score": 7.5,
+      "cve": "CVE-2021-41773",
+      "euvd_id": null,
+      "ghsa_id": null,
+      "osv_generic_id": null,
+      "cwes": ["CWE-22"],
+      "epss_score": 0.9753,
+      "epss_percentile": 0.9991,
+      "remediation": "Upgrade Apache httpd to 2.4.50 or later.",
+      "reference": "https://httpd.apache.org/security/vulnerabilities_24.html",
+      "trending": false,
+      "exploit": [55]
+    }
+  ]
+}
+```
+
+---
+
+## Credentials
+
+Exposed credentials (emails, usernames, passwords) discovered in technologies or public sources.
+
+```
+GET /api/credentials/
+GET /api/credentials/{id}/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `email`, `username`, `secret`, and `context`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `technology`, `email`, `username`, `secret`.
+</ParamField>
+
+**Credential-specific Response Fields**
+
+<ResponseField name="technology" type="object or null">
+  Embedded simplified technology where the credential was found.
+</ResponseField>
+
+<ResponseField name="email" type="string or null">
+  Email address of the exposed account.
+</ResponseField>
+
+<ResponseField name="username" type="string or null">
+  Username of the exposed account.
+</ResponseField>
+
+<ResponseField name="secret" type="string or null">
+  Password, API key, or other secret of the exposed account.
+</ResponseField>
+
+<ResponseField name="context" type="string or null">
+  Where the credential was found and the circumstances of the exposure.
+</ResponseField>
+
+---
+
+## Exploits
+
+Public exploit code or modules targeting a vulnerability or technology.
+
+```
+GET /api/exploits/
+GET /api/exploits/{id}/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `title`, `edb_id`, and `reference`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Allowed values: `id`, `vulnerability`, `technology`, `title`, `edb_id`,
+  `reference`.
+</ParamField>
+
+**Exploit-specific Response Fields**
+
+<ResponseField name="vulnerability" type="object or null">
+  Embedded simplified vulnerability that the exploit targets.
+</ResponseField>
+
+<ResponseField name="technology" type="object or null">
+  Embedded simplified technology the exploit targets when the vulnerability is
+  unknown.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Name of the exploit as its source reports it.
+</ResponseField>
+
+<ResponseField name="edb_id" type="integer or null">
+  Exploit Database (EDB) identifier.
+</ResponseField>
+
+<ResponseField name="reference" type="string or null">
+  Link to the exploit code or advisory.
+</ResponseField>

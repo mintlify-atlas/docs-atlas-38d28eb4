@@ -1,0 +1,358 @@
+---
+title: 'REST API Endpoints for Reports'
+sidebarTitle: 'Reports'
+description: 'Generate security assessment reports in PDF format via the Rekono API, with all project findings, statistics, and vulnerability details included.'
+---
+
+Rekono reports export the findings of a security assessment in a structured, shareable format. A report is always scoped to one of three levels — a **project**, a **target**, or a **task** — and can be generated in PDF, JSON, or XML. The file is produced asynchronously in a background thread; the API immediately returns a report object in `Pending` status, which transitions to `Ready` once the file is written. This page documents every REST endpoint for triggering, listing, downloading, and deleting reports.
+
+## Authentication
+
+All endpoints require a valid session token:
+
+```http
+Authorization: Token <your-api-token>
+```
+
+Only project members can request or read reports. Only the user who requested a report can download or delete it.
+
+---
+
+## Report status lifecycle
+
+Once `POST /api/reports/` is called, the report moves through the following states:
+
+<Steps>
+  <Step title="Pending">
+    The report object is created and returned immediately. The background thread has started generating the file.
+  </Step>
+  <Step title="Ready">
+    The file has been written successfully. The report can now be downloaded via `GET /api/reports/{id}/download/`.
+  </Step>
+  <Step title="Error">
+    File generation failed. The report object remains in the database but has no downloadable file.
+  </Step>
+</Steps>
+
+<Warning>
+  A report with `status: "Pending"` cannot be deleted. Wait for the generation to complete (or fail) before calling `DELETE`.
+</Warning>
+
+---
+
+## Enumerations
+
+### ReportFormat
+
+<ParamField body="format" type="string" required>
+  Output format for the report file. One of:
+
+  | Value | Description |
+  |-------|-------------|
+  | `json` | All finding types grouped by type, exported as a structured JSON document. Finding type selection and triage filters apply. |
+  | `xml`  | Same scope and filters as JSON, but written as an XML document. |
+  | `pdf`  | A visual assessment report structured by target and host, with severity charts. Finding type selection is not available for PDF. |
+</ParamField>
+
+### FindingName
+
+The `finding_types` parameter (JSON and XML only) accepts a subset of the following values:
+
+| Value | Description |
+|-------|-------------|
+| `OSINT` | Open-source intelligence findings. |
+| `Host` | Discovered host entries. |
+| `Port` | Open and scanned ports. |
+| `Path` | Discovered URL paths. |
+| `Technology` | Identified technologies on a host. |
+| `Credential` | Exposed credentials. |
+| `Vulnerability` | Vulnerability findings. |
+| `Exploit` | Available exploits for discovered vulnerabilities. |
+
+---
+
+## Endpoints
+
+### List Reports
+
+<br />
+
+**`GET /api/reports/`**
+
+Returns all reports accessible to the authenticated user — those scoped to projects, targets, or tasks the user is a member of.
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `format` and `status` fields.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort results. Allowed values: `id`, `project`, `target`, `task`, `status`, `format`, `user`, `date`. Prefix with `-` for descending order.
+</ParamField>
+
+<ParamField query="project" type="integer">
+  Filter reports scoped to a specific project ID.
+</ParamField>
+
+<ParamField query="target" type="integer">
+  Filter reports scoped to a specific target ID.
+</ParamField>
+
+<ParamField query="task" type="integer">
+  Filter reports scoped to a specific task ID.
+</ParamField>
+
+<ParamField query="format" type="string">
+  Filter by format: `json`, `xml`, or `pdf`.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by status: `Pending`, `Ready`, or `Error`.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer">
+  Unique numeric identifier of the report.
+</ResponseField>
+
+<ResponseField name="project" type="object">
+  Full project object if the report is project-scoped; `null` otherwise.
+</ResponseField>
+
+<ResponseField name="target" type="object">
+  Minimal target object if the report is target-scoped; `null` otherwise.
+</ResponseField>
+
+<ResponseField name="task" type="object">
+  Task object if the report is task-scoped; `null` otherwise.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current generation state: `"Pending"`, `"Ready"`, or `"Error"`.
+</ResponseField>
+
+<ResponseField name="format" type="string">
+  Format of the generated file: `"json"`, `"xml"`, or `"pdf"`.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Minimal user object (`id`, `username`) of the user who requested the report.
+</ResponseField>
+
+<ResponseField name="date" type="string">
+  ISO 8601 datetime when the report was requested.
+</ResponseField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/reports/?project=5&format=pdf&ordering=-date"
+```
+
+---
+
+### Generate a Report
+
+<br />
+
+**`POST /api/reports/`**
+
+Triggers the generation of a new report. The response is returned immediately with `status: "Pending"` while the file is built in the background. Returns `404 Not Found` if no findings match the specified scope and filter criteria — in that case, no report object is created.
+
+**Scope — provide exactly one of:**
+
+<ParamField body="project" type="integer">
+  ID of the project whose findings the report should cover. The most specific scope wins: if `task` is also provided, it takes precedence.
+</ParamField>
+
+<ParamField body="target" type="integer">
+  ID of the target whose findings the report should cover.
+</ParamField>
+
+<ParamField body="task" type="integer">
+  ID of the task whose findings the report should cover (most specific scope).
+</ParamField>
+
+**Format:**
+
+<ParamField body="format" type="string" required>
+  Output format: `"json"`, `"xml"`, or `"pdf"`.
+</ParamField>
+
+**Finding filters (JSON and XML only):**
+
+<ParamField body="only_true_positives" type="boolean">
+  When `true`, only include findings that auditors have marked as `TRUE_POSITIVE`. When `false` (default), includes `UNTRIAGED`, `WONT_FIX`, and `TRUE_POSITIVE` findings.
+</ParamField>
+
+<ParamField body="include_findings_from_user_input" type="boolean">
+  When `true`, include findings that were manually created by users rather than discovered by tool executions. Defaults to `false`.
+</ParamField>
+
+<ParamField body="finding_types" type="array">
+  Restrict the report to specific finding types. Accepts an array of `FindingName` values (e.g. `["Vulnerability", "Exploit"]`). Ignored for PDF format — all types are always included in PDF reports.
+</ParamField>
+
+**Example — generate a full PDF report for a project**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": 5,
+    "format": "pdf"
+  }' \
+  "https://rekono.example.com/api/reports/"
+```
+
+**Example — generate a filtered JSON report for a task**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": 18,
+    "format": "json",
+    "only_true_positives": true,
+    "finding_types": ["Vulnerability", "Exploit", "Credential"]
+  }' \
+  "https://rekono.example.com/api/reports/"
+```
+
+**Response** — `201 Created`
+
+```json
+{
+  "id": 41,
+  "project": {
+    "id": 5,
+    "name": "Acme Corp External Assessment"
+  },
+  "target": null,
+  "task": null,
+  "status": "Pending",
+  "format": "pdf",
+  "user": { "id": 3, "username": "alice" },
+  "date": "2024-11-15T09:32:00Z"
+}
+```
+
+---
+
+### Get a Report
+
+<br />
+
+**`GET /api/reports/{id}/`**
+
+Retrieves the metadata for a single report. Poll this endpoint to check whether generation has completed before attempting a download.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the report.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/reports/41/"
+```
+
+**Sample response when ready**
+
+```json
+{
+  "id": 41,
+  "project": { "id": 5, "name": "Acme Corp External Assessment" },
+  "target": null,
+  "task": null,
+  "status": "Ready",
+  "format": "pdf",
+  "user": { "id": 3, "username": "alice" },
+  "date": "2024-11-15T09:32:00Z"
+}
+```
+
+---
+
+### Download a Report
+
+<br />
+
+**`GET /api/reports/{id}/download/`**
+
+Downloads the generated report file. The response is a binary file attachment. The filename in the `Content-Disposition` header is a UUID with the format extension (e.g. `a1b2c3d4-....pdf`).
+
+<Tip>
+  Use `-o report.pdf` with curl (or save the response body to a file) to write the downloaded file to disk.
+</Tip>
+
+Returns `400 Bad Request` if the report status is `Pending` or `Error`. Returns `404 Not Found` if the file is no longer present on disk.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the report to download.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  -o assessment-report.pdf \
+  "https://rekono.example.com/api/reports/41/download/"
+```
+
+**Response** — `200 OK` with `Content-Disposition: attachment; filename="<uuid>.pdf"` and the binary file body.
+
+---
+
+### Delete a Report
+
+<br />
+
+**`DELETE /api/reports/{id}/`**
+
+Permanently removes the report record and deletes the generated file from disk. Only the user who requested the report may delete it.
+
+<Warning>
+  Reports with `status: "Pending"` cannot be deleted. The background thread writing the file would continue running against a now-deleted record, leaving an orphaned file on disk. Wait for the report to reach `Ready` or `Error` status first.
+</Warning>
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the report to delete.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/reports/41/"
+```
+
+**Response** — `204 No Content`
+
+---
+
+## Error responses
+
+<Accordion title="Common error shapes">
+
+| Status | Meaning |
+|--------|---------|
+| `400 Bad Request` | Validation failed — check `format`, scope fields, or the pending-deletion constraint. |
+| `401 Unauthorized` | No valid authentication token was provided. |
+| `403 Forbidden` | The user is not a member of the scoped project, or is not the report owner for a write operation. |
+| `404 Not Found` | The report ID does not exist, the download file is missing, or no findings matched the requested criteria (on POST). |
+
+</Accordion>

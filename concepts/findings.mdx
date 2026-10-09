@@ -1,0 +1,290 @@
+---
+title: 'Understanding Findings: The Rekono Data Model'
+sidebarTitle: 'Findings'
+description: 'Findings are the structured results that tools produce — from raw OSINT data to confirmed vulnerabilities — deduplicated and linked across the attack surface.'
+---
+
+Rekono converts every raw tool output into structured **findings** — typed records linked to the exact host, port, or technology where they were discovered. Rather than dumping execution logs at you, Rekono builds a living inventory of your target's attack surface: OSINT data feeding into hosts, hosts into ports, ports into paths and technologies, technologies into vulnerabilities, and vulnerabilities into exploits. Each type is a first-class Django model with its own fields, deduplication logic, triage status, and enrichment pipeline. This page covers every finding type, how they chain together, how duplicates are merged, and how vulnerabilities are enriched with CVE intelligence.
+
+---
+
+## Finding types
+
+### OSINT
+
+`OSINT` findings represent data gathered from public sources during passive reconnaissance — no packets are sent to the target.
+
+```python
+class OSINT(TriageFinding):
+    data      = models.TextField(max_length=250)
+    data_type = models.TextField(max_length=10, choices=OSINTDataType.choices)
+    source    = models.TextField(max_length=50, blank=True, null=True)
+```
+
+The `data_type` field classifies what was found, using the `OSINTDataType` enum:
+
+| Value | Description |
+|---|---|
+| `IP` | An IP address associated with the organisation |
+| `Domain` | A domain name (subdomain, related domain) |
+| `VHOST` | A virtual host served by one of its addresses |
+| `URL` | A URL exposed by the organisation |
+| `Email` | An email address belonging to the organisation |
+| `ASN` | An Autonomous System Number assigned to it |
+| `Username` | A username of one of its members |
+| `Password` | A leaked password |
+
+Only `IP` and `Domain` OSINT findings feed further tool executions as targets — other types like `Email` and `Username` are recorded for the auditor but do not trigger additional scans.
+
+---
+
+### Host
+
+`Host` represents a network host identified by its IP address, optionally linked to a domain and enriched with OS fingerprinting and VirusTotal reputation data.
+
+```python
+class Host(HacktricksFinding):
+    ip                  = models.TextField(max_length=30)
+    domain              = models.TextField(max_length=500, blank=True, null=True)
+    os                  = models.TextField(max_length=250, blank=True, null=True)
+    os_type             = models.TextField(max_length=10, choices=HostOS.choices, default=HostOS.OTHER)
+    country             = models.TextField(max_length=100, blank=True, null=True)
+    city                = models.TextField(max_length=100, blank=True, null=True)
+    latitude            = models.FloatField(blank=True, null=True)
+    longitude           = models.FloatField(blank=True, null=True)
+    reputation          = models.IntegerField(blank=True, null=True)
+    malicious_analysis  = models.IntegerField(blank=True, null=True)
+    suspicious_analysis = models.IntegerField(blank=True, null=True)
+    total_analysis      = models.IntegerField(blank=True, null=True)
+    whois               = models.TextField(blank=True, null=True)
+```
+
+`os_type` uses the `HostOS` enum: `Linux`, `Windows`, `MacOS`, `iOS`, `Android`, `Solaris`, `FreeBSD`, `Other`. The OS type is used to filter which tool configurations can run against the host — for example, an SMB tool only runs against `Windows` hosts when the OS type is known.
+
+Hosts that extend `HacktricksFinding` are automatically linked to a relevant HackTricks wiki page when one exists (stored in `hacktricks_link`).
+
+---
+
+### Port
+
+`Port` records an open port on a host, along with its service and protocol.
+
+```python
+class Port(HacktricksFinding):
+    host     = models.ForeignKey(Host, related_name="port", ...)
+    port     = models.IntegerField()
+    status   = models.TextField(max_length=17, choices=PortStatus.choices, default=PortStatus.OPEN)
+    protocol = models.TextField(max_length=5, choices=TransportProtocol.choices, blank=True, null=True)
+    service  = models.TextField(max_length=50, blank=True, null=True)
+```
+
+Port status values from `PortStatus`: `Open`, `Open - Filtered`, `Filtered`, `Closed`, `Closed - Filtered`.
+
+Transport protocol from `TransportProtocol`: `TCP`, `UDP`.
+
+Port findings are deduplicated on `(host, port, protocol)`. Two executions that both discover port 443/TCP on the same host produce a single `Port` record, not two. The `service` field — e.g. `https`, `ssh`, `smb` — is used by tool input filters to route the right tools to the right ports.
+
+---
+
+### Path
+
+`Path` records a resource found within a port — a web endpoint, a directory, or an SMB share.
+
+```python
+class Path(Finding):
+    port       = models.ForeignKey(Port, related_name="path", ...)
+    path       = models.TextField(max_length=500)
+    status     = models.IntegerField(blank=True, null=True)   # HTTP status code
+    extra_info = models.TextField(max_length=100, blank=True, null=True)
+    type       = models.TextField(choices=PathType.choices, default=PathType.ENDPOINT)
+```
+
+`PathType` values: `Endpoint` (web application path) and `Share` (file-sharing directory, e.g. SMB).
+
+The `status` field holds the HTTP status code returned by the endpoint. Path findings also respect the `TargetPort.path` scope: if the task has a target port with a path set, only paths that start with that prefix are included in further scanning.
+
+---
+
+### Technology
+
+`Technology` records a software product detected on a port, with its version when known.
+
+```python
+class Technology(HacktricksFinding):
+    port        = models.ForeignKey(Port, related_name="technology", ...)
+    name        = models.TextField(max_length=100)
+    version     = models.TextField(max_length=100, blank=True, null=True)
+    description = models.TextField(max_length=200, blank=True, null=True)
+    reference   = models.TextField(max_length=250, blank=True, null=True)
+```
+
+Technology findings are deduplicated on `(port, name, version)` with case-insensitive name matching. The technology name is used as input for exploit-search configurations (SearchSploit, Metasploit) and for technology-specific vulnerability scanners.
+
+---
+
+### Vulnerability
+
+`Vulnerability` is the richest finding type. It records a security weakness found in a technology or directly on a port, and it is enriched with data from multiple CVE providers.
+
+```python
+class Vulnerability(TriageFinding):
+    technology     = models.ForeignKey(Technology, ..., blank=True, null=True)
+    port           = models.ForeignKey(Port, ..., blank=True, null=True)
+    name           = models.TextField(max_length=100)
+    description    = models.TextField(blank=True, null=True)
+    severity       = models.IntegerField(choices=Severity.choices, default=Severity.MEDIUM)
+    cvss_version   = models.TextField(max_length=3, blank=True, null=True)
+    cvss_vector    = models.TextField(max_length=200, blank=True, null=True)
+    cvss_base_score = models.FloatField(blank=True, null=True)
+    cve            = models.TextField(max_length=30, blank=True, null=True)
+    euvd_id        = models.TextField(max_length=30, blank=True, null=True)
+    ghsa_id        = models.TextField(max_length=30, blank=True, null=True)
+    osv_generic_id = models.TextField(max_length=100, blank=True, null=True)
+    cwes           = models.JSONField(default=list)
+    epss_score     = models.FloatField(blank=True, null=True)
+    epss_percentile = models.FloatField(blank=True, null=True)
+    remediation    = models.TextField(blank=True, null=True)
+    reference      = models.TextField(max_length=250, blank=True, null=True)
+    trending       = models.BooleanField(default=False)
+```
+
+Vulnerability findings are deduplicated by `(technology or port, name or CVE)`. A CVE match takes priority over a name match. A tool that doesn't detect the parent technology can still complete a finding originally scoped to a technology, by matching at the port level.
+
+---
+
+### Credential
+
+`Credential` records an exposed username, password, API key, or other secret — found either inside a technology or on a public source.
+
+```python
+class Credential(TriageFinding):
+    technology = models.ForeignKey(Technology, ..., blank=True, null=True)
+    email      = models.TextField(max_length=100, blank=True, null=True)
+    username   = models.TextField(max_length=100, blank=True, null=True)
+    secret     = models.TextField(max_length=300, blank=True, null=True)
+    context    = models.TextField(max_length=300, blank=True, null=True)
+```
+
+All three data fields (`email`, `username`, `secret`) are optional because a leak can expose only one of them — for example, an email address from a public breach database without the corresponding password.
+
+---
+
+### Exploit
+
+`Exploit` records a public exploit that targets a vulnerability or a technology directly.
+
+```python
+class Exploit(TriageFinding):
+    vulnerability = models.ForeignKey(Vulnerability, ..., blank=True, null=True)
+    technology    = models.ForeignKey(Technology, ..., blank=True, null=True)
+    title         = models.TextField(max_length=100)
+    edb_id        = models.IntegerField(blank=True, null=True)
+    reference     = models.TextField(max_length=250, blank=True, null=True)
+```
+
+The `edb_id` field holds the Exploit Database identifier. Exploits are deduplicated from the most specific context (same vulnerability) to the least specific (same port), so results from SearchSploit and Metasploit are merged intelligently rather than producing redundant records.
+
+---
+
+## Finding hierarchy
+
+Findings form a tree rooted at the target. Each type is discovered from, and linked to, the finding that exposed it:
+
+```
+Target
+└── OSINT          (passive data about the target)
+└── Host           (IP address discovered for the target)
+    └── Port       (open port on the host)
+        ├── Path           (endpoint or share on the port)
+        ├── Technology     (software detected on the port)
+        │   ├── Vulnerability  (CVE in the technology)
+        │   │   └── Exploit    (public exploit for the CVE)
+        │   ├── Credential     (secret found in the technology)
+        │   └── Exploit        (exploit targeting the technology directly)
+        └── Vulnerability  (CVE directly on the port, technology unknown)
+            └── Exploit    (public exploit for the port-level CVE)
+```
+
+This chain is what makes Rekono's automation possible: the output of each finding type is the input of the next tool configurations. When Nmap discovers port 22/TCP running SSH, Rekono automatically queues SSH Audit against that port. When SSH Audit finds a vulnerability, SearchSploit and Metasploit search for exploits.
+
+---
+
+## Deduplication
+
+Rekono's `FindingManager.create_finding()` deduplicates findings at write time using the `_unique_fields` pattern defined on each model. Before creating a new record, it queries for an existing finding that matches all unique fields within the same target scope:
+
+```python
+# Example from OSINT
+_unique_fields = [
+    Finding.UniqueField("data", ignore_case=True),
+    Finding.UniqueField("data_type"),
+]
+
+# Example from Port
+_unique_fields = [
+    Finding.UniqueField("host"),
+    Finding.UniqueField("port"),
+    Finding.UniqueField("protocol", match_null_and_empty=True),
+]
+```
+
+Each `UniqueField` supports two deduplication options:
+
+| Option | Behaviour |
+|---|---|
+| `ignore_case=True` | Matches strings case-insensitively (e.g. technology name `Apache` vs `apache`) |
+| `match_null_and_empty=True` | A `null` or empty incoming value is dropped from the match; an existing `null` also matches an incoming value, so a partial finding can be completed later |
+
+When a duplicate is found, `FindingManager._merge()` fills any blank fields on the existing record with the new values, without overwriting fields that already have data. The execution is still linked to the existing finding, so you can see every tool that reported it.
+
+Fixing a finding also cascades: when a `Host` is marked as fixed, all `Port`, `Path`, `Technology`, `Vulnerability`, `Credential`, and `Exploit` findings discovered within it are automatically marked as fixed with `auto_fixed = PARENT_FIXED`.
+
+---
+
+## Triage
+
+Findings that extend `TriageFinding` — `OSINT`, `Vulnerability`, `Credential`, and `Exploit` — can be reviewed by auditors and assigned a triage status. The `TriageStatus` enum defines the valid conclusions:
+
+| Value | Description |
+|---|---|
+| `Untriaged` | The finding hasn't been reviewed yet (default) |
+| `True Positive` | The finding is confirmed real and must be remediated |
+| `False Positive` | The finding is not real; excluded from reports and active scans |
+| `Won't Fix` | The finding is real but accepted as a risk |
+
+Triage status is preserved across re-runs: if a finding disappears and reappears later, Rekono restores it with the verdict the auditor previously assigned intact.
+
+<Info>
+  Triage status also controls how findings are exported to DefectDojo. `True Positive` → `verified=True`; `False Positive` → `false_p=True`; `Won't Fix` → `risk_accepted=True`. Untriaged findings are exported as active but unverified.
+</Info>
+
+---
+
+## CVE enrichment
+
+When a `Vulnerability` finding has a CVE identifier, Rekono enriches it automatically using multiple external providers. No manual lookups are required:
+
+| Provider | Data enriched |
+|---|---|
+| NVD NIST | `description`, `cvss_version`, `cvss_vector`, `cvss_base_score`, `cwes`, `remediation`, `reference` |
+| VulnCheck NVD++ | Same fields as NVD, used as a faster/more complete alternative |
+| OSV | `osv_generic_id`, `description`, `cwes`, `remediation` |
+| GHSA | `ghsa_id`, `description`, `cwes`, `remediation` |
+| EU Vulnerability Database (ENISA) | `euvd_id`, `severity`, `description` |
+| FIRST EPSS | `epss_score`, `epss_percentile` — probability of exploitation in the next 30 days |
+| CVE Crowd | `trending` — whether the CVE is currently being discussed on social networks |
+| HackTricks | `hacktricks_link` — link to the HackTricks page for the affected technology or port |
+
+### Severity levels
+
+Severity is stored as an integer and displayed as a label. The `Severity` enum orders values from least to most critical, so findings can be sorted by urgency:
+
+| Label | Integer | CVSS range (approximate) |
+|---|---|---|
+| `Info` | 1 | Informational; no direct risk |
+| `Low` | 2 | CVSS 0.1–3.9 |
+| `Medium` | 3 | CVSS 4.0–6.9 |
+| `High` | 4 | CVSS 7.0–8.9 |
+| `Critical` | 5 | CVSS 9.0–10.0 |
+
+The `epss_score` field (0.0–1.0) adds an exploitability dimension independent of CVSS: a `Medium` severity vulnerability with a high EPSS score is often more urgent than a `High` severity one that has never been exploited in the wild. The `trending` boolean surfaces CVEs that are currently being actively discussed, giving you an additional real-time signal when prioritising remediation.

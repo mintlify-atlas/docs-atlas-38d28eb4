@@ -1,0 +1,355 @@
+---
+title: 'REST API Endpoints for Tools and Configurations'
+sidebarTitle: 'Tools'
+description: 'Query available hacking tools and their named configurations to understand what Rekono can run and what inputs each configuration accepts.'
+---
+
+Rekono tools are the security scanners and assessment utilities that the platform orchestrates. Each tool exposes one or more named **configurations** — discrete things the tool can do, each with its own command template and assessment stage. This page documents the REST endpoints for reading tools and configurations, including the `is_installed` availability flag, supported intensity levels, and the input types each configuration accepts.
+
+<Note>
+  Tools and configurations are defined by database migrations and cannot be created, updated, or deleted through the API. The endpoints described here are read-only (`GET`), with the exception of the like/unlike actions inherited from the base viewset.
+</Note>
+
+## Authentication
+
+All endpoints require a valid session token:
+
+```http
+Authorization: Token <your-api-token>
+```
+
+---
+
+## Enumerations
+
+Understanding the enum values used across tool and configuration responses makes filtering and display logic straightforward.
+
+### Stage
+
+The `stage` field on a configuration indicates the assessment phase it belongs to. Rekono uses the stage to determine the order in which configurations inside a process are executed.
+
+| Value | Name | Description |
+|-------|------|-------------|
+| `1` | `OSINT` | Data gathered from public sources, such as subdomains of a domain. |
+| `2` | `ENUMERATION` | Discovery of hosts, open ports, and their services. |
+| `3` | `VULNERABILITIES` | Vulnerability scanning of discovered hosts and services. |
+| `4` | `SERVICES` | Deep testing of a specific service, e.g. a web application or TLS configuration. |
+| `5` | `EXPLOITATION` | Search for exploits available for discovered vulnerabilities. |
+
+### Intensity
+
+The `intensity` field on an `Intensity` object indicates how aggressive the execution is. Each tool maps only the intensities it supports to its own CLI arguments, so users can tune aggressiveness without knowing tool-specific flags.
+
+| Value | Name | Description |
+|-------|------|-------------|
+| `1` | `SNEAKY` | Slowest and stealthiest scan profile. |
+| `2` | `LOW` | Reduced aggressiveness and noise. |
+| `3` | `NORMAL` | Default scan profile. |
+| `4` | `HARD` | More thorough and faster, generating higher network traffic. |
+| `5` | `INSANE` | Maximum speed and aggression. |
+
+---
+
+## Tools
+
+### List Tools
+
+<br />
+
+**`GET /api/tools/`**
+
+Returns a paginated list of all tools that have at least one active (non-deprecated) configuration. Tools that have only deprecated configurations are hidden from this list.
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `name`, `command`, and `script` fields.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort results. Allowed values: `id`, `name`, `command`, `liked`, `likes`. Prefix with `-` for descending order.
+</ParamField>
+
+<ParamField query="name" type="string">
+  Exact match on the tool name. Use `name__icontains` for a case-insensitive substring search.
+</ParamField>
+
+<ParamField query="is_installed" type="boolean">
+  Filter to only tools that are available (`true`) or unavailable (`false`) in this Rekono deployment.
+</ParamField>
+
+<ParamField query="stage" type="integer">
+  Filter tools by the assessment stage of their configurations (1–5).
+</ParamField>
+
+<ParamField query="intensity" type="integer">
+  Filter tools that support a particular intensity level (1–5).
+</ParamField>
+
+<ParamField query="input" type="string">
+  Filter by an input type name that any configuration of the tool accepts.
+</ParamField>
+
+<ParamField query="output" type="string">
+  Filter by a finding type name that any configuration of the tool discovers.
+</ParamField>
+
+<ParamField query="liked" type="boolean">
+  Filter to tools the requesting user has liked.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer">
+  Unique numeric identifier of the tool.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Display name of the tool (max 30 characters, unique across the platform).
+</ResponseField>
+
+<ResponseField name="command" type="string">
+  CLI command used to invoke the tool (e.g. `nmap`, `nikto`).
+</ResponseField>
+
+<ResponseField name="script" type="string">
+  Path to the script executed by the command, for tools that are scripts rather than standalone binaries. `null` for most tools.
+</ResponseField>
+
+<ResponseField name="is_installed" type="boolean">
+  Whether the tool binary is present and executable in this Rekono deployment.
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Detected version string of the installed tool, or `null` if the tool is not installed or does not report a version.
+</ResponseField>
+
+<ResponseField name="reference" type="string">
+  URL to the official documentation or homepage of the tool.
+</ResponseField>
+
+<ResponseField name="icon" type="string">
+  URL to the tool's logo image, or `null` if none is configured.
+</ResponseField>
+
+<ResponseField name="liked" type="boolean">
+  Whether the requesting user has liked this tool.
+</ResponseField>
+
+<ResponseField name="likes" type="integer">
+  Total number of likes the tool has received across all users.
+</ResponseField>
+
+<ResponseField name="intensities" type="array">
+  List of intensity objects that the tool supports. Each object has `id`, `argument` (the CLI flag that applies the intensity, or an empty string when the default behavior already matches), and `value` (the intensity name string, e.g. `"NORMAL"`).
+</ResponseField>
+
+<ResponseField name="configurations" type="array">
+  List of non-deprecated configurations the tool exposes. Each entry contains `id`, `name`, `stage` (as the stage name string), and `default` (boolean).
+</ResponseField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/tools/?is_installed=true&stage=2&ordering=name"
+```
+
+**Sample response (one item)**
+
+```json
+{
+  "id": 2,
+  "name": "Nmap",
+  "command": "nmap",
+  "script": null,
+  "is_installed": true,
+  "version": "7.94",
+  "reference": "https://nmap.org",
+  "icon": "https://rekono.example.com/static/icons/nmap.png",
+  "liked": false,
+  "likes": 14,
+  "intensities": [
+    { "id": 5, "argument": "-T2", "value": "LOW" },
+    { "id": 6, "argument": "",    "value": "NORMAL" },
+    { "id": 7, "argument": "-T4", "value": "HARD" },
+    { "id": 8, "argument": "-T5", "value": "INSANE" }
+  ],
+  "configurations": [
+    { "id": 7, "name": "default",      "stage": "ENUMERATION", "default": true  },
+    { "id": 8, "name": "host-only",    "stage": "ENUMERATION", "default": false },
+    { "id": 9, "name": "vuln-scripts", "stage": "VULNERABILITIES", "default": false }
+  ]
+}
+```
+
+---
+
+### Get a Tool
+
+<br />
+
+**`GET /api/tools/{id}/`**
+
+Retrieves a single tool by its numeric ID. Returns the same shape as each item in the list endpoint.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the tool.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/tools/2/"
+```
+
+---
+
+## Configurations
+
+A configuration is one named capability of a tool — for example, a default port scan or a vulnerability script sweep. Configurations are what processes are made of (via steps), and they are what tasks execute directly when a user picks a tool without choosing a specific configuration.
+
+### List Configurations
+
+<br />
+
+**`GET /api/configurations/`**
+
+Returns a paginated list of all non-deprecated configurations across all tools.
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over the configuration `name` field.
+</ParamField>
+
+<ParamField query="tool" type="integer">
+  Filter configurations belonging to a specific tool ID.
+</ParamField>
+
+<ParamField query="stage" type="integer">
+  Filter by assessment stage (1–5).
+</ParamField>
+
+<ParamField query="default" type="boolean">
+  Filter to only default (`true`) or non-default (`false`) configurations.
+</ParamField>
+
+<ParamField query="input" type="string">
+  Filter configurations that accept a particular input type name.
+</ParamField>
+
+<ParamField query="output" type="string">
+  Filter configurations that discover a particular finding type name.
+</ParamField>
+
+<ParamField query="process" type="integer">
+  Filter configurations already included in a given process ID.
+</ParamField>
+
+<ParamField query="no_process" type="integer">
+  Filter configurations **not yet** included in a given process ID — useful when building a step-picker UI.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer">
+  Unique numeric identifier of the configuration.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Name of the configuration, unique within its tool (max 30 characters).
+</ResponseField>
+
+<ResponseField name="stage" type="string">
+  Assessment stage name (e.g. `"ENUMERATION"`).
+</ResponseField>
+
+<ResponseField name="default" type="boolean">
+  Whether this is the configuration selected when a user picks the tool without specifying a configuration.
+</ResponseField>
+
+<ResponseField name="tool" type="object">
+  Minimal tool reference: `id`, `name`, `command`, `version`, `reference`, `icon`.
+</ResponseField>
+
+<ResponseField name="wordlists" type="object">
+  `{ "required": bool, "supported": bool }` — whether the configuration accepts or requires a wordlist input.
+</ResponseField>
+
+<ResponseField name="input_technologies" type="object">
+  `{ "required": bool, "supported": bool }` — whether the configuration accepts or requires technology findings as input.
+</ResponseField>
+
+<ResponseField name="input_vulnerabilities" type="object">
+  `{ "required": bool, "supported": bool }` — whether the configuration accepts or requires vulnerability findings as input.
+</ResponseField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/configurations/?stage=3&tool=2"
+```
+
+**Sample response (one item)**
+
+```json
+{
+  "id": 9,
+  "name": "vuln-scripts",
+  "stage": "VULNERABILITIES",
+  "default": false,
+  "tool": {
+    "id": 2,
+    "name": "Nmap",
+    "command": "nmap",
+    "version": "7.94",
+    "reference": "https://nmap.org",
+    "icon": "https://rekono.example.com/static/icons/nmap.png"
+  },
+  "wordlists": { "required": false, "supported": false },
+  "input_technologies": { "required": false, "supported": false },
+  "input_vulnerabilities": { "required": true,  "supported": true  }
+}
+```
+
+---
+
+### Get a Configuration
+
+<br />
+
+**`GET /api/configurations/{id}/`**
+
+Retrieves a single configuration by its numeric ID. Returns the same shape as each item in the list endpoint.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the configuration.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/configurations/9/"
+```
+
+---
+
+## Error responses
+
+<Accordion title="Common error shapes">
+
+| Status | Meaning |
+|--------|---------|
+| `401 Unauthorized` | No valid authentication token was provided. |
+| `403 Forbidden` | The authenticated user does not have the required role permissions. |
+| `404 Not Found` | The requested tool or configuration ID does not exist or has been deprecated. |
+
+</Accordion>

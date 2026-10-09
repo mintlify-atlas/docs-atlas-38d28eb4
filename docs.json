@@ -1,72 +1,105 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Rekono",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7e6496",
+    "light": "#2a0d45",
+    "dark": "#aad2e1"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://icons.duckduckgo.com/ip3/nmap.org.ico",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/11fdb5c1-f8bb-400d-8b5c-e126a8c38e92.png",
+    "dark": "https://media.brand.dev/11fdb5c1-f8bb-400d-8b5c-e126a8c38e92.png"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:support@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/pablosnt/rekono"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/pablosnt/rekono"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/projects-and-targets",
+              "concepts/tools-and-configurations",
+              "concepts/processes-and-tasks",
+              "concepts/findings"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/vulnerability-management",
+              "features/alerts-and-notifications",
+              "features/reports",
+              "features/metrics",
+              "features/telegram-bot"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/config-file",
+              "configuration/integrations",
+              "configuration/users-and-roles",
+              "configuration/wordlists"
+            ]
+          },
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "self-hosting/docker-compose",
+              "self-hosting/upgrade",
+              "self-hosting/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/authentication"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "api-reference/projects",
+              "api-reference/targets",
+              "api-reference/tasks",
+              "api-reference/executions",
+              "api-reference/findings",
+              "api-reference/processes",
+              "api-reference/tools",
+              "api-reference/alerts",
+              "api-reference/reports"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

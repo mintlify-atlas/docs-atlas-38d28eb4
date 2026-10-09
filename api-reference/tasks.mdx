@@ -1,0 +1,373 @@
+---
+title: 'REST API Endpoints for Tasks'
+sidebarTitle: 'Tasks'
+description: 'Create and manage scan tasks — single tool runs or full processes — with scheduling, repetition, intensity, and wordlist configuration.'
+---
+
+Rekono **Tasks** are the unit of work that drives scanning. A task ties a target to either a single tool **Configuration** or an entire **Process** (an ordered chain of configurations), then carries optional settings like scan intensity, a future execution time, automatic repetition, a port scope, wordlists, and pre-seeded technologies or vulnerabilities. This page documents every REST endpoint available for the `Task` resource.
+
+<Note>
+All endpoints require a valid Bearer token. Users only see tasks that belong to projects they are members of. Tasks cannot be updated after creation; cancel the existing task and create a new one to change parameters.
+</Note>
+
+---
+
+## Intensity Enum
+
+The `intensity` field controls how aggressively the underlying tool runs. Each tool only supports a subset of intensities; supplying an unsupported value returns `400 Bad Request`.
+
+| Value | Numeric | Meaning |
+|-------|---------|---------|
+| `Sneaky` | `1` | Slowest, most evasive |
+| `Low` | `2` | Quiet scan |
+| `Normal` | `3` | Default balanced scan |
+| `Hard` | `4` | Aggressive, faster |
+| `Insane` | `5` | Maximum speed and noise |
+
+---
+
+## TimeUnit Enum
+
+Used together with `repeat_in` to schedule recurring tasks.
+
+| Value | Meaning |
+|-------|---------|
+| `Minutes` | Repeat every N minutes |
+| `Hours` | Repeat every N hours |
+| `Days` | Repeat every N days |
+| `Weeks` | Repeat every N weeks |
+
+---
+
+## List Tasks
+
+Return a paginated list of tasks accessible to the authenticated user. Supports free-text search over target value, process name, and tool/configuration name.
+
+```
+GET /api/tasks/
+```
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search over `target__target`, `process__name`,
+  `configuration__name`, and `configuration__tool__name`.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort field. Prefix with `-` for descending. Allowed values: `id`, `target`,
+  `process`, `configuration`, `configuration__tool`, `creation`,
+  `enqueued_at`, `start`, `end`.
+</ParamField>
+
+<ParamField query="page" type="integer">
+  Page number for paginated results.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/tasks/?ordering=-creation"
+```
+
+**Response — 200 OK**
+
+```json
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 42,
+      "target": { "id": 7, "project": 3, "target": "corp.example.com", "type": "Domain" },
+      "process": null,
+      "configuration": { "id": 5, "name": "Nmap SYN", "tool": { "id": 2, "name": "Nmap" } },
+      "target_port": null,
+      "intensity": "Normal",
+      "executor": { "id": 1, "username": "alice" },
+      "scheduled_at": null,
+      "repeat_in": null,
+      "repeat_time_unit": null,
+      "creation": "2025-06-01T10:00:00Z",
+      "enqueued_at": "2025-06-01T10:00:01Z",
+      "start": "2025-06-01T10:00:05Z",
+      "end": "2025-06-01T10:03:22Z",
+      "wordlists": [],
+      "input_technologies": [],
+      "input_vulnerabilities": [],
+      "executions": [15],
+      "status": "Completed",
+      "progress": 100
+    }
+  ]
+}
+```
+
+---
+
+## Create a Task
+
+Create and immediately enqueue a new task. You must supply either `process_id` or `configuration_id`; if both are given, `configuration_id` takes precedence and the process is discarded.
+
+```
+POST /api/tasks/
+```
+
+**Request Body**
+
+<ParamField body="target_id" type="integer" required>
+  ID of the target to scan. The target must belong to a project where the
+  authenticated user is a member.
+</ParamField>
+
+<ParamField body="configuration_id" type="integer">
+  ID of the tool configuration to run. Mutually exclusive with
+  `process_id`; supply at least one. Deprecated configurations are rejected.
+</ParamField>
+
+<ParamField body="process_id" type="integer">
+  ID of the process (multi-stage tool chain) to run. Mutually exclusive with
+  `configuration_id`; supply at least one.
+</ParamField>
+
+<ParamField body="intensity" type="string">
+  How aggressive the scan should be. Defaults to `Normal`. Must be one of the
+  `Intensity` enum values and must be supported by the chosen tool.
+</ParamField>
+
+<ParamField body="scheduled_at" type="string (ISO 8601 datetime)">
+  Future datetime when the task should start. Leave empty to start immediately.
+  Must be in the future.
+</ParamField>
+
+<ParamField body="repeat_in" type="integer">
+  Number of `repeat_time_unit` intervals to wait before running the task again.
+  Must be between 1 and 60. Requires `repeat_time_unit`.
+</ParamField>
+
+<ParamField body="repeat_time_unit" type="string">
+  Time unit for `repeat_in`. One of: `Minutes`, `Hours`, `Days`, `Weeks`.
+  Requires `repeat_in`.
+</ParamField>
+
+<ParamField body="target_port_id" type="integer">
+  ID of a `TargetPort` to restrict the scan to one port. Must belong to the
+  same target as `target_id`.
+</ParamField>
+
+<ParamField body="wordlists" type="array of integers">
+  IDs of wordlists to supply to the execution.
+</ParamField>
+
+<ParamField body="input_technologies" type="array of integers">
+  IDs of `InputTechnology` objects that seed the scan with known technologies.
+  Only accepted when using `configuration_id` and the tool accepts technology
+  inputs; silently cleared otherwise.
+</ParamField>
+
+<ParamField body="input_vulnerabilities" type="array of integers">
+  IDs of `InputVulnerability` objects that seed the scan with known
+  vulnerabilities. Only accepted when using `configuration_id` and the tool
+  accepts vulnerability inputs; silently cleared otherwise.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_id": 7,
+    "configuration_id": 5,
+    "intensity": "Normal"
+  }' \
+  "https://rekono.example.com/api/tasks/"
+```
+
+**Response — 201 Created**
+
+<ResponseField name="id" type="integer">
+  Auto-assigned primary key of the new task.
+</ResponseField>
+
+<ResponseField name="target" type="object">
+  Serialized target (`id`, `project`, `target`, `type`).
+</ResponseField>
+
+<ResponseField name="process" type="object or null">
+  Serialized process when the task runs a process, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="configuration" type="object or null">
+  Serialized configuration when the task runs a single tool, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="target_port" type="object or null">
+  Serialized target port when the task is port-scoped, otherwise `null`.
+</ResponseField>
+
+<ResponseField name="intensity" type="string">
+  The effective intensity used for the task.
+</ResponseField>
+
+<ResponseField name="executor" type="object">
+  Serialized user who created the task.
+</ResponseField>
+
+<ResponseField name="scheduled_at" type="string or null">
+  ISO 8601 datetime when the task is scheduled to run, or `null` for immediate
+  execution.
+</ResponseField>
+
+<ResponseField name="repeat_in" type="integer or null">
+  Repetition interval quantity, or `null` when not repeating.
+</ResponseField>
+
+<ResponseField name="repeat_time_unit" type="string or null">
+  Repetition interval unit, or `null` when not repeating.
+</ResponseField>
+
+<ResponseField name="creation" type="string (ISO 8601)">
+  Timestamp when the task record was created.
+</ResponseField>
+
+<ResponseField name="enqueued_at" type="string or null (ISO 8601)">
+  Timestamp when the task was placed in the queue.
+</ResponseField>
+
+<ResponseField name="start" type="string or null (ISO 8601)">
+  Timestamp when the first execution started.
+</ResponseField>
+
+<ResponseField name="end" type="string or null (ISO 8601)">
+  Timestamp when the last execution finished.
+</ResponseField>
+
+<ResponseField name="wordlists" type="array of integers">
+  IDs of the wordlists configured for the task.
+</ResponseField>
+
+<ResponseField name="input_technologies" type="array of integers">
+  IDs of input technologies seeded into the task.
+</ResponseField>
+
+<ResponseField name="input_vulnerabilities" type="array of integers">
+  IDs of input vulnerabilities seeded into the task.
+</ResponseField>
+
+<ResponseField name="executions" type="array of integers">
+  IDs of the individual tool-run executions spawned by this task.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Computed status derived from the executions. One of: `Requested`,
+  `Running`, `Completed`, `Cancelled`, `Error`.
+</ResponseField>
+
+<ResponseField name="progress" type="integer">
+  Percentage (0–100) of executions that have reached a terminal status.
+</ResponseField>
+
+---
+
+## Get a Task
+
+Retrieve the full details of a single task.
+
+```
+GET /api/tasks/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the task to retrieve.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/tasks/42/"
+```
+
+**Response — 200 OK** returns the same fields as [Create a Task](#create-a-task).
+
+---
+
+## Cancel a Task
+
+Cancel a running or scheduled task. The task record is preserved for history; in-flight executions are stopped in their worker and queued ones are removed from the queue.
+
+```
+DELETE /api/tasks/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the task to cancel.
+</ParamField>
+
+<Warning>
+A task whose executions have all already finished cannot be cancelled. The endpoint returns `400 Bad Request` with `{"task": "Task {id} can't be cancelled"}` in that case.
+</Warning>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/tasks/42/"
+```
+
+**Response — 204 No Content** on success.
+
+---
+
+## Repeat a Task
+
+Create and enqueue a new task with the same target, configuration or process, intensity, wordlists, and seeded inputs as an existing task. The new task is owned by the requesting user and is never scheduled or set to repeat, even if the original was.
+
+```
+POST /api/tasks/{id}/repeat/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the task to repeat.
+</ParamField>
+
+<Warning>
+Returns `400 Bad Request` if the original task is still running, or if it references a configuration that has since been deprecated.
+</Warning>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/tasks/42/repeat/"
+```
+
+**Response — 201 Created** returns the new task object with the same schema as [Create a Task](#create-a-task).
+
+---
+
+## Latest Tasks
+
+Return the tasks that started most recently. Scheduled tasks that have not yet begun are excluded.
+
+```
+GET /api/tasks/latest/
+```
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/tasks/latest/"
+```
+
+**Response — 200 OK** returns a list of task objects ordered by `start` descending, using the same schema as [List Tasks](#list-tasks).

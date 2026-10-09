@@ -1,0 +1,309 @@
+---
+title: 'REST API Endpoints for Targets'
+sidebarTitle: 'Targets'
+description: 'Add and manage the domains, IP addresses, CIDR networks, and URLs that Rekono scans; create, list, and delete targets via the REST API.'
+---
+
+Rekono **Targets** are the hosts, networks, or domains inside a project that the scanning tools run against. This page documents the REST endpoints for creating and managing targets — including the `TargetPort` sub-resource that scopes a task to a single port — and explains the `TargetType` values that Rekono auto-detects from the target value you supply.
+
+<Note>
+All endpoints require a valid Bearer token. Users only see targets that belong to projects they are members of. Because a target's value fully defines its identity, targets cannot be updated after creation — submit a new `POST` instead.
+</Note>
+
+---
+
+## TargetType Enum
+
+Rekono automatically detects the type of a target from its value. You never set `type` yourself; it is computed during creation.
+
+| Value | Meaning |
+|-------|---------|
+| `Private IP` | IPv4 or IPv6 address in a private or reserved range |
+| `Public IP` | IPv4 or IPv6 address routable on the Internet |
+| `Network` | CIDR notation network, e.g. `192.168.1.0/24` |
+| `IP range` | Hyphenated address range, e.g. `192.168.1.1-100` |
+| `Domain` | Resolvable domain name |
+
+<Info>
+Tools that only accept a single host (not a network) will be skipped automatically when the target type is `Network` or `IP range`.
+</Info>
+
+---
+
+## List Targets
+
+Return a paginated list of targets belonging to projects the authenticated user is a member of. Supports free-text search on `target` and ordering by `id`, `target`, or `type`.
+
+```
+GET /api/targets/
+```
+
+**Query Parameters**
+
+<ParamField query="project" type="integer">
+  Filter targets to a specific project by its ID.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by target type. One of: `Private IP`, `Public IP`, `Network`,
+  `IP range`, `Domain`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Free-text search on the `target` field.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort field. Prefix with `-` for descending order. Allowed values: `id`,
+  `target`, `type`.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/targets/?project=3&ordering=target"
+```
+
+**Response — 200 OK**
+
+```json
+{
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 7,
+      "project": 3,
+      "target": "corp.example.com",
+      "type": "Domain",
+      "target_ports": [],
+      "tasks": [],
+      "defectdojo_sync": null,
+      "notes": [],
+      "reports": []
+    }
+  ]
+}
+```
+
+---
+
+## Create a Target
+
+Add a new target to a project. Rekono resolves and validates the value — IP addresses are checked for routability, domains are DNS-resolved, and networks/ranges are expanded — and auto-assigns the `type`.
+
+```
+POST /api/targets/
+```
+
+**Request Body**
+
+<ParamField body="project" type="integer" required>
+  ID of the project this target belongs to. The authenticated user must be a
+  member of the project.
+</ParamField>
+
+<ParamField body="target" type="string" required>
+  Value of the target: an IP address, CIDR network, hyphenated IP range, or
+  a resolvable domain name. Maximum 100 characters.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"project": 3, "target": "corp.example.com"}' \
+  "https://rekono.example.com/api/targets/"
+```
+
+**Response — 201 Created**
+
+<ResponseField name="id" type="integer">
+  Auto-assigned primary key of the new target.
+</ResponseField>
+
+<ResponseField name="project" type="integer">
+  ID of the parent project.
+</ResponseField>
+
+<ResponseField name="target" type="string">
+  The target value as submitted.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Auto-detected target type. One of the `TargetType` values listed above.
+</ResponseField>
+
+<ResponseField name="target_ports" type="array of integers">
+  IDs of `TargetPort` objects scoped to this target. Empty on creation.
+</ResponseField>
+
+<ResponseField name="tasks" type="array of integers">
+  IDs of tasks launched against this target. Empty on creation.
+</ResponseField>
+
+<ResponseField name="defectdojo_sync" type="object or null">
+  DefectDojo engagement sync details when configured.
+</ResponseField>
+
+<ResponseField name="notes" type="array">
+  Analyst notes attached to this target.
+</ResponseField>
+
+<ResponseField name="reports" type="array">
+  Report references linked to this target.
+</ResponseField>
+
+---
+
+## Get a Target
+
+Retrieve the full details of a single target.
+
+```
+GET /api/targets/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the target to retrieve.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/targets/7/"
+```
+
+**Response — 200 OK** returns the same fields as [Create a Target](#create-a-target).
+
+---
+
+## Delete a Target
+
+Permanently delete a target. Cascades to all tasks and findings scoped to this target.
+
+```
+DELETE /api/targets/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the target to delete.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/targets/7/"
+```
+
+**Response — 204 No Content**
+
+<Warning>
+Targets cannot be updated (`PUT` and `PATCH` are not supported). To change a target value, delete the existing one and create a new target with the corrected value.
+</Warning>
+
+---
+
+## Target Ports
+
+A `TargetPort` scopes a task to a single port (and optional sub-path) on a target. When a task carries a `target_port`, only that port is fed to the tools, preventing a single scan from spreading across the entire target.
+
+### List Target Ports
+
+```
+GET /api/target-ports/
+```
+
+<ParamField query="target" type="integer">
+  Filter target ports by their parent target ID.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort field. Prefix with `-` for descending order.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/target-ports/?target=7"
+```
+
+**Response — 200 OK**
+
+```json
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 12,
+      "target": 7,
+      "port": 443,
+      "path": "/admin"
+    }
+  ]
+}
+```
+
+---
+
+### Create a Target Port
+
+```
+POST /api/target-ports/
+```
+
+**Request Body**
+
+<ParamField body="target" type="integer" required>
+  ID of the parent target.
+</ParamField>
+
+<ParamField body="port" type="integer" required>
+  Port number (0–65535) where the service is listening.
+</ParamField>
+
+<ParamField body="path" type="string">
+  Optional sub-path for web services that aren't served at `/`. Maximum 100
+  characters. Must begin with `/`.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"target": 7, "port": 443, "path": "/admin"}' \
+  "https://rekono.example.com/api/target-ports/"
+```
+
+**Response — 201 Created**
+
+<ResponseField name="id" type="integer">
+  Auto-assigned primary key of the new target port.
+</ResponseField>
+
+<ResponseField name="target" type="integer">
+  ID of the parent target.
+</ResponseField>
+
+<ResponseField name="port" type="integer">
+  The port number.
+</ResponseField>
+
+<ResponseField name="path" type="string or null">
+  The sub-path, or `null` when the service is at root.
+</ResponseField>

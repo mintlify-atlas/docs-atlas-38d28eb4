@@ -1,0 +1,148 @@
+---
+title: 'Security Metrics and Attack Surface Analytics'
+sidebarTitle: 'Metrics'
+description: 'Track how exposed a target is, where vulnerabilities concentrate, and how the attack surface evolves over time with Rekono built-in metrics.'
+---
+
+Rekono's metrics system gives security teams a continuously updated picture of their attack surface without requiring custom queries or external dashboards. Every endpoint in the stats API is scoped to the projects the requesting user belongs to, so different team members see only the data they are authorized to access. The combination of point-in-time snapshots and evolution series lets you answer both "what is the exposure right now?" and "how has it changed over the past months?"
+
+## Available Metrics
+
+All statistics endpoints live under `/api/stats/` and accept `GET` requests. Each one returns an aggregated view of the findings within the caller's authorized scope.
+
+### Host Metrics
+
+<CardGroup cols={2}>
+  <Card title="GET /api/stats/host-os/" icon="desktop">
+    Counts how many active (unfixed) hosts run each operating system family. Results are grouped by `os_type` and ordered by count descending, making it easy to see which OS family dominates the environment.
+  </Card>
+  <Card title="GET /api/stats/host-vulnerabilities/" icon="server">
+    Shows how many open and fixed vulnerabilities were found in each host, with a per-severity breakdown. Hosts are annotated with `open`, `fixed`, and one count per severity level (`critical`, `high`, `medium`, `low`, `info`), ordered by the number of open vulnerabilities.
+  </Card>
+</CardGroup>
+
+### Port and Technology Metrics
+
+<CardGroup cols={2}>
+  <Card title="GET /api/stats/port/" icon="door-open">
+    Returns the most common open ports with their service names and how many hosts expose each one. Useful for spotting unexpected services running across the environment.
+  </Card>
+  <Card title="GET /api/stats/technology/" icon="microchip">
+    Lists detected technologies and how many ports expose each one, sorted by prevalence. Helps identify widely deployed software that might warrant a targeted vulnerability scan.
+  </Card>
+</CardGroup>
+
+### Vulnerability Metrics
+
+<CardGroup cols={3}>
+  <Card title="GET /api/stats/vulnerability-cve/" icon="triangle-exclamation">
+    Groups active vulnerabilities by CVE identifier and returns a count for each. Useful for identifying which CVEs are most widespread across your targets.
+  </Card>
+  <Card title="GET /api/stats/vulnerability-cwe/" icon="list">
+    Groups vulnerabilities by CWE weakness category. Reveals systemic patterns — for example, a high count of CWE-79 (XSS) findings across many targets.
+  </Card>
+  <Card title="GET /api/stats/vulnerability-status/" icon="chart-bar">
+    Breaks down vulnerabilities by severity level. Returns the total count for each `Severity` value (Critical, High, Medium, Low, Info) across active and fixed findings.
+  </Card>
+</CardGroup>
+
+### Triage and Coverage Metrics
+
+<CardGroup cols={2}>
+  <Card title="GET /api/stats/triaging/" icon="clipboard-check">
+    Shows how many triageable findings (OSINT, Credentials, Vulnerabilities, Exploits) are in each triage status: `Untriaged`, `True Positive`, `False Positive`, and `Won't Fix`. Helps track review queue depth.
+  </Card>
+  <Card title="GET /api/stats/exploit-coverage/" icon="bomb">
+    Compares vulnerabilities that have a known public exploit against those that do not. The ratio between exploitable and non-exploitable vulnerabilities helps prioritize patch efforts on the most immediately dangerous findings.
+  </Card>
+</CardGroup>
+
+## Evolution Series
+
+The evolution endpoints return time-series data — finding counts grouped by month — for each finding type. They are the foundation for charting how your attack surface has grown or shrunk over time.
+
+| Endpoint | What it tracks |
+|----------|----------------|
+| `GET /api/stats/osint-evolution/` | OSINT data points discovered per month |
+| `GET /api/stats/host-evolution/` | New hosts per month |
+| `GET /api/stats/port-evolution/` | Open ports discovered per month |
+| `GET /api/stats/path-evolution/` | Web endpoints and shares found per month |
+| `GET /api/stats/technology-evolution/` | Technologies detected per month |
+| `GET /api/stats/credential-evolution/` | Exposed credentials per month |
+| `GET /api/stats/vulnerability-evolution/` | Vulnerabilities discovered per month |
+| `GET /api/stats/exploit-evolution/` | Public exploits found per month |
+
+Each response contains a list of `{month, count}` objects that can be fed directly into a time-series chart. For example, feeding `vulnerability-evolution` into a line chart over a six-month window immediately shows whether a new scanning process uncovered a spike of findings or whether the attack surface is contracting as vulnerabilities are remediated.
+
+```bash
+GET /api/stats/vulnerability-evolution/
+```
+
+```json
+[
+  { "month": "2024-09", "count": 14 },
+  { "month": "2024-10", "count": 23 },
+  { "month": "2024-11", "count": 11 },
+  { "month": "2024-12", "count": 8 }
+]
+```
+
+<Tip>
+Compare `vulnerability-evolution` against `exploit-evolution` over the same period to see whether the proportion of exploitable vulnerabilities in your environment is increasing faster than your remediation rate.
+</Tip>
+
+## Top Projects
+
+```bash
+GET /api/projects/top/
+```
+
+Returns the projects with the most security activity, ordered by vulnerability count with targets count, tasks count, and host count as tiebreakers. Hosts that have been fixed are excluded from the ranking so remediated findings do not inflate the activity score.
+
+This endpoint is the natural starting point for a security operations dashboard — it surfaces the projects that need the most attention without requiring the viewer to scan through every project manually.
+
+## Latest Findings
+
+Two endpoints power the real-time dashboard views by returning the findings that were most recently discovered:
+
+```bash
+GET /api/hosts/latest/
+```
+
+Returns hosts ordered by the most recent execution that discovered them (`-latest`). Only unfixed hosts are included. This is useful for a "new assets" widget that shows what infrastructure appeared in the last scan cycle.
+
+```bash
+GET /api/vulnerabilities/latest/
+```
+
+Returns vulnerabilities ordered by the start date of the most recent execution that reported them. Only active (unfixed, non-false-positive) vulnerabilities are included. A vulnerability that reappears in a new scan floats to the top, ensuring the feed always reflects what the latest execution found.
+
+Both endpoints support the same filter parameters as their full list counterparts, so you can narrow the latest hosts to a specific project or the latest vulnerabilities to a specific severity:
+
+```bash
+GET /api/vulnerabilities/latest/?severity=5
+```
+
+## Worker Queue Health
+
+```bash
+GET /api/stats/rq/
+```
+
+<Warning>
+This endpoint is restricted to **Admin** users only, since it exposes the state of the entire deployment rather than project-scoped data.
+</Warning>
+
+Returns the current state of every RQ worker queue — `tasks`, `findings`, `executions`, `monitor` — with the following counters for each:
+
+| Field | Description |
+|-------|-------------|
+| `jobs` | Total jobs in the queue. |
+| `workers` | Number of active worker processes. |
+| `finished_jobs` | Jobs completed successfully. |
+| `started_jobs` | Jobs currently running. |
+| `deferred_jobs` | Jobs waiting on a dependency. |
+| `failed_jobs` | Jobs that failed and are in the failed registry. |
+| `scheduled_jobs` | Jobs waiting for a scheduled execution time. |
+
+Use this endpoint to verify that the `findings` worker is keeping up with scan output, that the `tasks` scheduler is functioning, and that no queue is accumulating a backlog of failed jobs.

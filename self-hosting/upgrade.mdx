@@ -1,0 +1,242 @@
+---
+title: 'Upgrade Rekono from 1.x to 2.x'
+sidebarTitle: 'Upgrade'
+description: 'Migrate your PostgreSQL 14 database to PostgreSQL 18 and upgrade to Rekono 2.x with automatic migration via Docker Compose or a manual dump.'
+---
+
+Rekono 2.0.0 is a major release that changes the underlying database engine from PostgreSQL 14 to PostgreSQL 18. Because PostgreSQL cannot read data directories written by a previous major version, data must be migrated before Rekono 2.x can use it. This guide covers both supported upgrade paths — Docker Compose (automatic migration) and installation from source (manual dump-and-restore). Rekono Desktop was removed in 2.x and is not covered here.
+
+<Warning>
+  **Take a full database backup before upgrading**, regardless of which installation method you use. Even though the automatic Docker Compose migration preserves the old PostgreSQL 14 data directory until you explicitly delete it, a separate backup gives you an independent recovery point.
+</Warning>
+
+## What Changed in 2.x
+
+Rekono 2.0.0 ships major changes across the entire stack. The most important ones that affect upgrades are listed below.
+
+<Accordion title="Database and infrastructure">
+  - **PostgreSQL 14 → 18**: the data directory format is incompatible; migration is required.
+  - **Redis → Valkey 8**: the queue broker was replaced. Queue names changed from `tasks-queue`, `executions-queue`, and `findings-queue` to `tasks`, `executions`, and `findings`.
+  - **Python 3.11+ required**, dependency management moved from pip to `uv`.
+  - **Frontend rebuilt** from Vue 2 + BootstrapVue to Vue 3 + Nuxt 4 + Nuxt UI.
+</Accordion>
+
+<Accordion title="Data model changes">
+  - Input technologies and vulnerabilities are now attached to each **task** instead of the target. Existing target-level values cannot be automatically assigned to the correct tasks and are lost on migration (see [Known Problems](#known-problems)).
+  - The `address` field of hosts is renamed to `ip`.
+  - Findings fields `first_seen`, `last_seen`, `detected_by`, and `is_active` are removed; exposure tracking is now derived from executions.
+  - The `tasks` status field is removed; scan status is derived from its executions.
+  - Defect-Dojo sync now stores the test identifier instead of a boolean flag; previously-imported executions appear as not imported after migration.
+</Accordion>
+
+<Accordion title="Configuration schema changes">
+  - SMTP configuration is **removed from `config.yaml`** and from all `RKN_EMAIL_*` environment variables. It is now managed through the database via the admin UI.
+  - The `rootpath` configuration key is removed; the Nginx configuration and frontend routing replace it.
+  - Rekono 2.x automatically migrates your existing `config.yaml` to the new schema during the first start, so you do not need to manually rewrite it.
+</Accordion>
+
+## Docker Compose Upgrade
+
+The Docker Compose upgrade path is fully automatic. The `rekono-upgrade` service handles the PostgreSQL migration before any Django migrations are applied.
+
+<Steps>
+  <Step title="Pull the latest code">
+    ```bash
+    git pull
+    ```
+
+    Keep your customized `config.yaml` file in place. Rekono 2.x reads it and automatically adapts it to the new configuration schema, migrating settings such as the SMTP server configuration to the database.
+  </Step>
+
+  <Step title="Start the updated stack">
+    ```bash
+    docker compose up -d --scale executions-worker=5
+    ```
+
+    Docker Compose pulls the new images and starts the services in dependency order. The `rekono-upgrade` service runs first, followed by `initializer`, and then all the workers and the backend.
+  </Step>
+
+  <Step title="Verify the migration">
+    Check the logs of the `rekono-upgrade` service to confirm the migration completed without errors:
+
+    ```bash
+    docker compose logs rekono-upgrade
+    ```
+
+    A successful migration produces output similar to:
+
+    ```
+    rekono-upgrade  | Dumping PostgreSQL 14 database...
+    rekono-upgrade  | Restoring into PostgreSQL 18...
+    rekono-upgrade  | Migration complete.
+    rekono-upgrade exited with code 0
+    ```
+
+    Once `rekono-upgrade` exits successfully, the `initializer` service applies the Django schema migrations and then the workers and backend start.
+  </Step>
+</Steps>
+
+<Info>
+  The migration is performed **only once** and is skipped entirely on fresh installations. If the migration fails, Rekono refuses to start — this is intentional. Starting with an empty database after a failed migration would silently discard all your data. The old PostgreSQL 14 data is preserved so you can diagnose and retry.
+</Info>
+
+## After a Successful Migration
+
+Once the stack is running and you have verified that your data is intact, the old PostgreSQL 14 data directory is no longer needed as a live database. The `rekono-upgrade` service replaces it with a compressed backup (`rekono-14-backup.sql.gz`) inside the `rekono_postgres` volume, so the old database does not continue consuming disk space.
+
+After you are satisfied that everything migrated correctly, you can remove the legacy volume entirely:
+
+```bash
+docker volume rm rekono_postgres
+```
+
+If you need to retrieve the compressed backup before removing the volume, copy it out first:
+
+```bash
+docker run --rm \
+  -v rekono_postgres:/backup \
+  -v $(pwd):/output \
+  alpine cp /backup/rekono-14-backup.sql.gz /output/
+```
+
+## If the Migration Fails
+
+Because Rekono intentionally refuses to start after a failed migration, follow these steps to recover:
+
+<Steps>
+  <Step title="Read the upgrade logs">
+    ```bash
+    docker compose logs rekono-upgrade
+    ```
+
+    Look for the first error message. Common causes include insufficient disk space, a corrupt PostgreSQL 14 data directory, or a networking issue between containers.
+  </Step>
+
+  <Step title="Fix the underlying issue">
+    Address the root cause identified in the logs. For example, free disk space, verify the `rekono_postgres` volume is intact, or ensure the `postgres` service is healthy before `rekono-upgrade` runs.
+  </Step>
+
+  <Step title="Restart the stack">
+    After fixing the issue, bring the stack back up. The `rekono-upgrade` service will attempt the migration again from the preserved PostgreSQL 14 data:
+
+    ```bash
+    docker compose down
+    docker compose up -d --scale executions-worker=5
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Do **not** delete the `rekono_postgres` volume while troubleshooting a failed migration. That volume holds the only copy of your PostgreSQL 14 data.
+</Warning>
+
+## Manual Upgrade (Installation from Source)
+
+When Rekono is installed from source, you manage the PostgreSQL installation yourself, so you must migrate the data manually. Any PostgreSQL version can be migrated using a SQL dump.
+
+<Steps>
+  <Step title="Dump the current database">
+    Run this against your existing PostgreSQL 14 (or earlier) instance, from the `backend/` directory:
+
+    ```bash
+    pg_dump --no-owner --no-privileges -d rekono > rekono.sql
+    ```
+  </Step>
+
+  <Step title="Install PostgreSQL 18">
+    Install PostgreSQL 18 using your system's package manager and create an empty `rekono` database:
+
+    ```sql
+    CREATE USER rekono WITH ENCRYPTED PASSWORD 'rekono';
+    CREATE DATABASE rekono;
+    ALTER DATABASE rekono OWNER TO rekono;
+    ```
+  </Step>
+
+  <Step title="Restore the dump">
+    ```bash
+    PGPASSWORD=<rekono database password> psql \
+      -U <rekono database username> \
+      -d rekono \
+      --single-transaction \
+      -v ON_ERROR_STOP=1 \
+      -f rekono.sql
+    ```
+  </Step>
+
+  <Step title="Apply Rekono migrations">
+    From the `backend/` directory, run the migration commands in order:
+
+    ```bash
+    uv run --no-dev manage.py rename_1_x_apps
+    uv run --no-dev manage.py migrate
+    uv run --no-dev manage.py remove_stale_contenttypes --no-input
+    uv run --no-dev manage.py migrate_1_x_config
+    ```
+  </Step>
+
+  <Step title="Update deployment-dependent data">
+    These commands update data that depends on the state of your deployment (installed tools, wordlist file sizes, etc.) rather than what is stored in the database:
+
+    ```bash
+    uv run --no-dev manage.py remove_deprecated_steps
+    uv run --no-dev manage.py update_wordlists_size
+    uv run --no-dev manage.py update_tools_status
+    uv run --no-dev manage.py monitor
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Rekono 2.x keeps wordlists and reports in the same directories of the Rekono home that 1.x used. If your home directory changes during the upgrade, move the `wordlists/` and `reports/` directories to the new location and update the database columns that store absolute paths: `wordlists_wordlist.path` and `executions_execution.output_file`.
+</Note>
+
+## Known Problems
+
+The following data losses occur due to data model changes and affect **every** upgrade path. They cannot be prevented by migrating the database differently.
+
+<Accordion title="Changes to default processes and wordlists are undone">
+  Rekono 2.0.0 recreates its default processes and wordlists during migration and matches them to existing entries by name. The consequences are:
+
+  - Default processes and wordlists that you **deleted** are recreated.
+  - Default processes and wordlists that you **renamed** are kept under your custom name, but a new entry with the original name is also created.
+  - **Steps you removed** from a default process are re-added. Steps you added are preserved.
+  - The file path of a **default wordlist** is reset to the path Rekono provides, because wordlist files move between package releases. Wordlists you uploaded keep their paths.
+</Accordion>
+
+<Accordion title="Executions are no longer marked as imported in Defect-Dojo">
+  Rekono 1.x stored only a boolean flag indicating whether an execution had been imported into Defect-Dojo. Rekono 2.0.0 stores the identifier of the Defect-Dojo test that was created, which is more useful but cannot be inferred from the 1.x data. As a result, all executions imported by Rekono 1.x appear as **not imported** after migration.
+
+  The Defect-Dojo synchronization configuration for your projects and targets is migrated, so new executions are imported as expected going forward.
+</Accordion>
+
+<Accordion title="Input technologies and vulnerabilities of targets are lost">
+  Rekono 1.x assigned input technologies and vulnerabilities to a **target**, so all tasks on that target shared the same values. Rekono 2.0.0 assigns them to each individual **task**, allowing different scans of the same target to use different values. There is no way to determine which tasks the 1.x target-level values belonged to, so they are not migrated.
+
+  You will need to re-specify input technologies and vulnerabilities when creating tasks that require them.
+</Accordion>
+
+## Changelog Highlights for 2.x
+
+The following is a summary of the most significant changes introduced in Rekono 2.0.0. See the full [CHANGELOG](https://github.com/pablosnt/rekono/blob/main/CHANGELOG.md) for the complete list.
+
+<CardGroup cols={2}>
+  <Card title="Brand-new UI" icon="browser">
+    The frontend was rebuilt from scratch with Nuxt 4, Vue 3, and Nuxt UI, replacing the original Vue 2 and BootstrapVue stack. New features include light/dark themes, finding detail pages, and expanded metrics dashboards.
+  </Card>
+  <Card title="Findings intelligence" icon="shield-halved">
+    Findings can be triaged as true positive, false positive, or won't fix. They can be marked as fixed manually or automatically when subsequent scans stop detecting them.
+  </Card>
+  <Card title="New integrations" icon="plug">
+    VirusTotal (host reputation), HackTricks (wiki links), CVE Crowd (trending CVEs), EPSS FIRST, VulnCheck NVD++, GitHub Security Advisories, EU Vulnerability Database, and OSV were all added for CVE enrichment and finding context.
+  </Card>
+  <Card title="Security hardening" icon="lock">
+    Sessions are stored in HttpOnly cookies, MFA via authenticator app or email is now available, sensitive data can be encrypted at rest, and Docker images run as unprivileged distroless users.
+  </Card>
+  <Card title="Reporting" icon="file-lines">
+    Reports can be generated in PDF, JSON, or XML with customizable HTML templates. Original tool reports can also be downloaded directly.
+  </Card>
+  <Card title="Proxy and header customization" icon="sliders">
+    HTTP headers and proxies used during executions are configurable at instance, user, and target level. Tool commands and outputs mask credentials and internal details.
+  </Card>
+</CardGroup>

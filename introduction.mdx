@@ -1,0 +1,101 @@
+---
+title: 'Rekono: Offensive Security Automation Platform'
+sidebarTitle: 'Introduction'
+description: 'Rekono chains 19 hacking tools, deduplicates findings, enriches CVEs, and delivers collaborative vulnerability intelligence — from OSINT to exploitation.'
+---
+
+Rekono is an offensive security automation platform that removes the repetitive, terminal-watching parts of a penetration test and lets you focus on the work that actually requires a skilled hacker. These docs cover everything you need to deploy Rekono, understand how it works internally, operate it day-to-day, and extend it through the REST API.
+
+## What Is Rekono?
+
+Every assessment follows roughly the same opening sequence: gather public information, discover hosts, enumerate ports, identify services, run service-specific tools, check for known vulnerabilities, search for exploits. The sequence is almost identical every time, it takes hours, and it is entirely mechanical.
+
+Rekono automates that sequence end-to-end. You define a target — a domain, an IP address, a CIDR range, or a URL — and Rekono builds the rest automatically. Findings from one tool become the inputs for the next: discovered ports are handed to the right service scanner, detected technologies are checked against vulnerability databases, and vulnerabilities are matched against public exploit repositories. Everything lands in one deduplicated inventory, attached to the exact host and port where it lives.
+
+Beyond raw automation Rekono is a collaborative platform. It gives your team shared projects, role-based access, collaborative triage, notes, metrics, and exportable reports. Scheduled and repeating scans keep your view of an attack surface current over time, and alert rules push notifications to email or Telegram the moment something worth your attention appears.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Deploy Rekono with Docker Compose and run your first scan in minutes.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand the services, worker queues, and tool-chaining pipeline.
+  </Card>
+  <Card title="Core Concepts" icon="book-open" href="/concepts/projects-and-targets">
+    Projects, targets, tasks, processes, findings, and more.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Full REST API with OpenAPI schema and Swagger UI.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Automated Tool Chaining" icon="link-simple">
+    Findings from one tool feed directly into the next. Discovered ports trigger service-specific scans automatically, without any manual copy-paste between terminals.
+  </Card>
+  <Card title="19 Integrated Hacking Tools" icon="toolbox">
+    OSINT, port scanning, directory enumeration, SSL/TLS analysis, secrets detection, SSH, SMB, web scanning, vulnerability scanning, and exploit search — all in one place.
+  </Card>
+  <Card title="Unified Finding Management" icon="shield-check">
+    The same finding reported by three different tools appears once in Rekono, deduplicated and linked to the host and port where it lives. False positives and resolved findings are tracked over time.
+  </Card>
+  <Card title="CVE Enrichment" icon="database">
+    Every detected CVE is automatically enriched with data from NVD, EPSS, OSV, GHSA, VulnCheck NVD++, and CVE Crowd — severity, exploitability scores, and remediation guidance, without opening a browser tab.
+  </Card>
+  <Card title="Scheduled and Repeating Scans" icon="clock-rotate-left">
+    Schedule a one-off scan for a future time or configure a recurring interval — daily, weekly, monthly — to continuously monitor an attack surface over time.
+  </Card>
+  <Card title="Alerts and Notifications" icon="bell">
+    Define alert rules for the findings you care about. Rekono notifies you by email or Telegram the moment a matching finding is discovered, so you never wait in front of the UI.
+  </Card>
+  <Card title="Telegram Bot" icon="paper-plane">
+    Launch scans and review findings from your phone. The Telegram bot gives you full task control and a push feed of new findings wherever you are.
+  </Card>
+  <Card title="Full REST API" icon="code">
+    Everything Rekono does is one API call away. The backend exposes a complete REST API with an OpenAPI 3 schema and an interactive Swagger UI at `/api/schema/swagger-ui/`.
+  </Card>
+</CardGroup>
+
+## Supported Hacking Tools
+
+Rekono ships with 19 pre-configured hacking tools organized by assessment stage:
+
+| Category | Tools |
+|---|---|
+| **OSINT** | [theHarvester](https://github.com/laramies/theHarvester), [EmailHarvester](https://github.com/maldevel/EmailHarvester) |
+| **Host, ports & services** | [Nmap](https://nmap.org/) |
+| **Enumeration** | [Dirsearch](https://github.com/maurosoria/dirsearch), [Gobuster](https://github.com/OJ/gobuster) |
+| **SSL / TLS** | [Sslscan](https://github.com/rbsec/sslscan), [SSLyze](https://nabla-c0d3.github.io/sslyze/documentation/) |
+| **Exposed secrets** | [GitLeaks](https://github.com/zricethezav/gitleaks) |
+| **SSH** | [SSH Audit](https://github.com/jtesta/ssh-audit) |
+| **SMB** | [SMBMap](https://github.com/ShawnDEvans/smbmap) |
+| **Web** | [Log4j Scan](https://github.com/fullhunt/log4j-scan), [Spring4Shell Scan](https://github.com/fullhunt/spring4shell-scan), [CMSeeK](https://github.com/Tuhinshubhra/CMSeeK/), [OWASP JoomScan](https://github.com/OWASP/joomscan), [OWASP ZAP](https://www.zaproxy.org/), [Nikto](https://github.com/sullo/nikto) |
+| **Vulnerability scanners** | [Nuclei](https://github.com/projectdiscovery/nuclei) |
+| **Exploits** | [SearchSploit](https://www.exploit-db.com/searchsploit), [Metasploit](https://www.metasploit.com/) |
+
+Each tool has one or more **Configurations** that map to a specific `Stage` in the pipeline (`OSINT → ENUMERATION → VULNERABILITIES → SERVICES → EXPLOITATION`), so Rekono always executes them in the right order.
+
+## Integrations
+
+Rekono connects to external services to enrich findings and send notifications:
+
+| Integration | Type | Purpose |
+|---|---|---|
+| [DefectDojo](https://www.defectdojo.com/) | Vulnerability Management | Findings are shipped to DefectDojo for consolidated reporting |
+| [Virus Total](https://www.virustotal.com/) | Malware Analysis | Identified hosts are checked for reputation and malware history |
+| [HackTricks](https://hacktricks.wiki/) | Hacking Wiki | Findings with a related HackTricks page are linked to it |
+| [CVE Crowd](https://cvecrowd.com/) | Trending CVEs | Detected CVEs are flagged as trending when CVE Crowd identifies them |
+| [FIRST EPSS](https://first.org/epss) | EPSS Provider | EPSS scores and percentiles for every detected CVE |
+| [NVD NIST](https://nvd.nist.gov/) | CVE Provider | Updated CVE metadata from the National Vulnerability Database |
+| [VulnCheck NVD++](https://www.vulncheck.com/nvd2) | CVE Provider | Enriched CVE data from VulnCheck's NVD mirror |
+| [OSV](https://osv.dev/) | CVE Provider | Open Source Vulnerabilities advisory data |
+| [GHSA](https://github.com/advisories) | CVE Provider | GitHub Security Advisory data |
+| [EU Vulnerability Database](https://euvd.enisa.europa.eu/homepage) | CVE Provider | ENISA European Vulnerability Database |
+| SMTP | Notifications | Account, execution, and alert notifications by email |
+| Telegram | Notifications | Execution and alert notifications via Telegram |
+
+<Note>
+  Rekono is intended only for authorized security testing, education, and research. You must have explicit permission to test every target you add to the platform. You are solely responsible for the use you make of Rekono. The authors, maintainers, and contributors provide it as-is, without warranty of any kind, and accept no liability for any damage or legal consequence arising from its misuse.
+</Note>

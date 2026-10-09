@@ -1,0 +1,420 @@
+---
+title: 'REST API Endpoints for Processes and Steps'
+sidebarTitle: 'Processes'
+description: 'Create reusable scan methodologies as named processes composed of ordered tool configuration steps, and manage them via the Rekono REST API.'
+---
+
+Rekono processes are reusable scan methodologies — named collections of tool configuration steps that execute together as a single coordinated task. This page documents every REST endpoint for creating, reading, updating, and deleting processes, as well as for adding and removing the individual steps that make up each process.
+
+## Authentication
+
+All endpoints require an authenticated session. Include your token in the `Authorization` header:
+
+```http
+Authorization: Token <your-api-token>
+```
+
+Requests without a valid token receive `401 Unauthorized`. Role-based permissions apply: only the process owner may modify or delete a process they created. Platform-provided (built-in) processes have no owner and cannot be modified via the API.
+
+---
+
+## Processes
+
+### List Processes
+
+<br />
+
+**`GET /api/processes/`**
+
+Returns a paginated list of all processes visible to the authenticated user. Processes are platform-wide resources, not scoped to a project, so every user can discover and reuse any process.
+
+**Query Parameters**
+
+<ParamField query="search" type="string">
+  Free-text search across `name` and `description` fields.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort results. Allowed values: `id`, `name`, `owner`, `liked`, `likes`. Prefix with `-` for descending order.
+</ParamField>
+
+<ParamField query="name" type="string">
+  Filter by exact name or use `name__icontains` for a case-insensitive substring match.
+</ParamField>
+
+<ParamField query="tag" type="string">
+  Filter processes that carry a specific tag label.
+</ParamField>
+
+<ParamField query="stage" type="integer">
+  Filter by the assessment stage of the tool configurations used in the steps (`1`=OSINT, `2`=ENUMERATION, `3`=VULNERABILITIES, `4`=SERVICES, `5`=EXPLOITATION).
+</ParamField>
+
+<ParamField query="owner" type="integer">
+  Filter by the numeric ID of the owning user.
+</ParamField>
+
+<ParamField query="owner_username" type="string">
+  Case-insensitive substring match on the owner's username.
+</ParamField>
+
+<ParamField query="liked" type="boolean">
+  Filter by whether the requesting user has liked the process.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer">
+  Unique identifier of the process.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Human-readable name of the process (max 100 characters, unique across the platform).
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Description of what the process covers (max 500 characters).
+</ResponseField>
+
+<ResponseField name="owner" type="object">
+  Minimal user object (`id`, `username`) of the creator, or `null` for built-in processes.
+</ResponseField>
+
+<ResponseField name="liked" type="boolean">
+  Whether the requesting user has liked this process.
+</ResponseField>
+
+<ResponseField name="likes" type="integer">
+  Total number of likes the process has received.
+</ResponseField>
+
+<ResponseField name="tags" type="array">
+  List of tag label strings assigned to the process.
+</ResponseField>
+
+<ResponseField name="steps" type="array">
+  Steps whose configuration is not deprecated. Each step contains `id`, `process` (id + name), and a nested `configuration` object.
+</ResponseField>
+
+<ResponseField name="wordlists" type="object">
+  `{ "required": bool, "supported": bool }` — whether any step requires or supports a wordlist input.
+</ResponseField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/processes/?ordering=-likes&tag=web"
+```
+
+---
+
+### Create a Process
+
+<br />
+
+**`POST /api/processes/`**
+
+Creates a new process owned by the authenticated user. The user becomes the owner and is the only one who can later update or delete it.
+
+**Request body**
+
+<ParamField body="name" type="string" required>
+  Unique name for the process (max 100 chars). Must satisfy the `NAME` input validation pattern.
+</ParamField>
+
+<ParamField body="description" type="string" required>
+  Description of what the process covers (max 500 chars).
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Optional list of tag label strings to assign to the process.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Full Web Assessment",
+    "description": "OSINT, enumeration, and vulnerability scanning for web targets.",
+    "tags": ["web", "recon"]
+  }' \
+  "https://rekono.example.com/api/processes/"
+```
+
+**Response** — `201 Created`
+
+```json
+{
+  "id": 12,
+  "name": "Full Web Assessment",
+  "description": "OSINT, enumeration, and vulnerability scanning for web targets.",
+  "owner": { "id": 3, "username": "alice" },
+  "liked": false,
+  "likes": 0,
+  "tags": ["web", "recon"],
+  "steps": [],
+  "wordlists": { "required": false, "supported": false }
+}
+```
+
+---
+
+### Get a Process
+
+<br />
+
+**`GET /api/processes/{id}/`**
+
+Retrieves a single process by its numeric ID.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the process.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/processes/12/"
+```
+
+---
+
+### Update a Process
+
+<br />
+
+**`PUT /api/processes/{id}/`**
+
+Replaces the editable fields of a process. Only the process owner may call this endpoint; other users receive `403 Forbidden`.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the process to update.
+</ParamField>
+
+**Request body**
+
+<ParamField body="name" type="string" required>
+  New name for the process.
+</ParamField>
+
+<ParamField body="description" type="string" required>
+  New description.
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Replacement list of tag labels. Omitting this field clears all existing tags.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Full Web Assessment v2",
+    "description": "Updated methodology with additional service-stage tools.",
+    "tags": ["web", "recon", "services"]
+  }' \
+  "https://rekono.example.com/api/processes/12/"
+```
+
+---
+
+### Delete a Process
+
+<br />
+
+**`DELETE /api/processes/{id}/`**
+
+Permanently removes a process and all of its steps. Only the process owner may call this endpoint.
+
+<Warning>
+  Deleting a process is irreversible. Any task or execution history that referenced this process retains the historical data, but the process itself cannot be recovered.
+</Warning>
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the process to delete.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/processes/12/"
+```
+
+**Response** — `204 No Content`
+
+---
+
+## Steps
+
+Steps bind a tool configuration to a process. Each combination of process and configuration must be unique — adding the same configuration twice to the same process returns a validation error. Steps carry no ordering of their own; the execution engine determines the run order from the stage of each configuration and the findings that earlier configurations produce.
+
+### List Steps
+
+<br />
+
+**`GET /api/steps/`**
+
+Returns a list of steps whose tool configuration is not deprecated.
+
+**Query Parameters**
+
+<ParamField query="process" type="integer">
+  Filter steps belonging to a specific process ID.
+</ParamField>
+
+<ParamField query="configuration" type="integer">
+  Filter steps that use a specific configuration ID.
+</ParamField>
+
+<ParamField query="tool" type="integer">
+  Filter by the ID of the tool that the step's configuration belongs to.
+</ParamField>
+
+<ParamField query="stage" type="integer">
+  Filter by the assessment stage of the configuration (`1`–`5`).
+</ParamField>
+
+<ParamField query="owner" type="integer">
+  Filter by the owner of the parent process.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort by `id`, `process`, or `configuration`.
+</ParamField>
+
+**Response fields**
+
+<ResponseField name="id" type="integer">
+  Unique identifier of the step.
+</ResponseField>
+
+<ResponseField name="process" type="object">
+  Minimal process reference: `{ "id": integer, "name": string }`.
+</ResponseField>
+
+<ResponseField name="configuration" type="object">
+  Full configuration object including the nested tool. See [GET /api/configurations/{id}/](#get-a-configuration) for the shape.
+</ResponseField>
+
+**Example**
+
+```bash
+curl -s -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/steps/?process=12"
+```
+
+---
+
+### Add a Step
+
+<br />
+
+**`POST /api/steps/`**
+
+Adds a tool configuration as a step in an existing process. The authenticated user must own the target process. The configuration must not be deprecated.
+
+**Request body**
+
+<ParamField body="process_id" type="integer" required>
+  ID of the process to add the step to.
+</ParamField>
+
+<ParamField body="configuration_id" type="integer" required>
+  ID of the (non-deprecated) tool configuration to attach as a step.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Token $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "process_id": 12,
+    "configuration_id": 7
+  }' \
+  "https://rekono.example.com/api/steps/"
+```
+
+**Response** — `201 Created`
+
+```json
+{
+  "id": 34,
+  "process": { "id": 12, "name": "Full Web Assessment v2" },
+  "configuration": {
+    "id": 7,
+    "name": "default",
+    "stage": "ENUMERATION",
+    "default": true,
+    "tool": {
+      "id": 2,
+      "name": "Nmap",
+      "command": "nmap",
+      "version": "7.94",
+      "reference": "https://nmap.org",
+      "icon": null
+    },
+    "wordlists": { "required": false, "supported": false },
+    "input_technologies": { "required": false, "supported": false },
+    "input_vulnerabilities": { "required": false, "supported": false }
+  }
+}
+```
+
+---
+
+### Remove a Step
+
+<br />
+
+**`DELETE /api/steps/{id}/`**
+
+Removes a step from its process. The authenticated user must own the process that contains the step.
+
+**Path parameters**
+
+<ParamField path="id" type="integer" required>
+  Numeric identifier of the step to remove.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s -X DELETE \
+  -H "Authorization: Token $TOKEN" \
+  "https://rekono.example.com/api/steps/34/"
+```
+
+**Response** — `204 No Content`
+
+---
+
+## Error responses
+
+<Accordion title="Common error shapes">
+
+| Status | Meaning |
+|--------|---------|
+| `400 Bad Request` | Validation failed — the response body contains field-level error messages. |
+| `401 Unauthorized` | No valid authentication token was provided. |
+| `403 Forbidden` | The authenticated user does not have ownership of the resource. |
+| `404 Not Found` | The requested process or step ID does not exist, or is not visible to the user. |
+
+</Accordion>

@@ -1,0 +1,212 @@
+---
+title: 'Deploy Rekono with Docker Compose'
+sidebarTitle: 'Docker Compose'
+description: 'Run the full Rekono stack — database, workers, frontend, and Nginx TLS proxy — with a single Docker Compose command on any Linux host.'
+---
+
+Rekono ships an official Docker Compose configuration that stands up every component of the stack — PostgreSQL 18, Valkey, all async workers, the Django REST backend, the Nuxt frontend, and an Nginx TLS reverse proxy — with one command. This page walks you through the prerequisites, the quick-start steps, how each service fits together, and how to customize the deployment for your environment.
+
+## Prerequisites
+
+Before starting, confirm your host meets the following requirements:
+
+| Requirement | Minimum | Recommended |
+|---|---|---|
+| Docker Engine | 24+ | Latest stable |
+| Docker Compose | v2 | v2.27+ |
+| RAM | 2 GB | 4 GB |
+| CPU cores | 1 | 2 |
+| OS | Any Linux host | Debian/Ubuntu LTS |
+
+<Note>
+  Docker Desktop on macOS and Windows includes Docker Compose v2. On Linux, install the `docker-compose-plugin` package alongside Docker Engine.
+</Note>
+
+## Quick Start
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/pablosnt/rekono
+    cd rekono
+    ```
+  </Step>
+
+  <Step title="Start the stack">
+    The `--scale executions-worker=5` flag launches five parallel execution workers so multiple scans can run concurrently. Adjust the number to match your available CPU cores.
+
+    ```bash
+    docker compose up -d --scale executions-worker=5
+    ```
+  </Step>
+
+  <Step title="Open the UI">
+    Nginx listens on ports 80 and 443. Navigate to **https://127.0.0.1** in your browser and accept the self-signed certificate warning on first run. Log in with the default credentials:
+
+    | Field | Default value |
+    |---|---|
+    | Username | `rekono` |
+    | Password | `rekono` |
+
+    <Warning>
+      Change the default credentials immediately after your first login. The initial admin account is controlled by the `RKN_USERNAME` and `RKN_PASSWORD` environment variables described in the [Customizing Deployment](#customizing-deployment) section below.
+    </Warning>
+  </Step>
+</Steps>
+
+<Tip>
+  Follow live output from all workers with `docker compose logs -f`. To filter to a single service, append its name: `docker compose logs -f executions-worker`.
+</Tip>
+
+## Services Overview
+
+The Compose file defines the following services. Services marked *internal only* are never directly reachable from the host network.
+
+| Service | Image | Purpose |
+|---|---|---|
+| `postgres` | `postgres:18-bookworm` | Primary PostgreSQL 18 database; exposed only on the internal network at port 5432. |
+| `valkey` | `valkey/valkey:8-bookworm` | In-memory queue broker (Valkey replaces Redis in 2.x); exposed on internal port 6379. |
+| `rekono-upgrade` | `postgres:14.2-alpine` | One-shot migration service. On upgrade from 1.x, dumps the PostgreSQL 14 data and restores it into the PostgreSQL 18 database. Exits immediately on a fresh install. |
+| `initializer` | `pablosnt/rekono-worker:latest` | One-shot setup service. Runs Django migrations, loads fixtures, creates the first admin user, and initializes wordlist metadata. Runs after `rekono-upgrade` succeeds. |
+| `tasks-worker` | `pablosnt/rekono-backend:latest` | RQ worker for the `tasks` queue with the built-in scheduler. Dequeues and coordinates scan tasks. |
+| `executions-worker` | `pablosnt/rekono-worker:latest` | RQ worker for the `executions` queue. Actually runs the hacking tools. **Horizontally scalable** — run as many replicas as you need. |
+| `findings-worker` | `pablosnt/rekono-backend:latest` | RQ worker for the `findings` queue. Parses tool output, creates findings, and triggers enrichment integrations. |
+| `monitor-worker` | `pablosnt/rekono-backend:latest` | RQ worker for the `monitor` queue with the built-in scheduler. Keeps CVE data up to date and cleans stale executions. |
+| `telegram-bot` | `pablosnt/rekono-backend:latest` | Runs the Telegram bot via the `telegram_bot` management command. Only active when a Telegram token is configured. |
+| `backend` | `pablosnt/rekono-backend:latest` | Django REST Framework API server (Gunicorn), listening on internal port 8000. Health-checked via the Swagger UI endpoint. |
+| `frontend` | `pablosnt/rekono-frontend:latest` | Nuxt 4 / Vue 3 UI server, listening on internal port 3000. |
+| `nginx` | `pablosnt/rekono-nginx:latest` | Nginx reverse proxy. The only service that binds to host ports (80 and 443). Handles TLS termination and routes traffic to `backend` and `frontend`. |
+
+## Scaling Executions Workers
+
+The `executions-worker` service is the only component that actually invokes the hacking tools. Each replica can run one tool execution at a time, so the number of workers you launch directly limits how many concurrent scans the platform can process.
+
+```bash
+# Launch with 5 executions workers (recommended for most deployments)
+docker compose up -d --scale executions-worker=5
+
+# Scale up without restarting any other services
+docker compose up -d --scale executions-worker=10
+
+# Scale back down
+docker compose up -d --scale executions-worker=2
+```
+
+The `executions-worker` containers require the `NET_ADMIN`, `NET_RAW`, and `NET_BIND_SERVICE` Linux capabilities because some of the bundled security tools need raw socket access. These capabilities are scoped to the worker containers and are not granted to any other service.
+
+## Customizing Deployment
+
+### Initial Admin Credentials
+
+The `initializer` service creates the first admin account on first run. Override the defaults with environment variables before running `docker compose up`:
+
+```bash
+export RKN_EMAIL=admin@example.com
+export RKN_USERNAME=admin
+export RKN_PASSWORD=changeme123
+
+docker compose up -d --scale executions-worker=5
+```
+
+<Info>
+  These variables are consumed only during the very first `initializer` run. Changing them on subsequent starts has no effect. Use the Rekono admin panel or Django management commands to update credentials afterwards.
+</Info>
+
+### Mounting a Custom Config File
+
+Rekono reads `config.yaml` at startup. Mount your own copy over the default one to customize database settings, allowed hosts, cookie security, tool paths, and more:
+
+```bash
+docker compose run --rm \
+  -v ./config.yaml:/rekono/config.yaml:ro \
+  backend uv run --no-dev manage.py check
+```
+
+For a persistent override, the `docker-compose.yml` already mounts `./config.yaml` from the repository root into each worker and the backend:
+
+```yaml
+volumes:
+  - ./config.yaml:/rekono/config.yaml:ro
+```
+
+Edit the `config.yaml` in the cloned repository directory and the changes are picked up on the next container restart. A minimal example:
+
+```yaml
+database:
+  name: rekono
+  user: null
+  password: null
+  host: 127.0.0.1
+  port: 5432
+frontend:
+  url: https://localhost
+rq:
+  host: 127.0.0.1
+  port: 6379
+security:
+  allowed-hosts:
+    - 127.0.0.1
+    - localhost
+    - ::1
+  cookies:
+    secure: false
+```
+
+## TLS Configuration
+
+Nginx generates a **self-signed certificate** on its first start and stores it inside the `nginx` Docker volume. This lets you reach the UI immediately without any manual setup, but browsers will show a security warning.
+
+### Providing Your Own Certificate
+
+To use a certificate from a trusted CA (or from Let's Encrypt), replace the files inside the `nginx` volume. The volume is mounted at `/etc/nginx/tls/` inside the container. Copy your certificate and private key there:
+
+```bash
+# Find the volume's mount point on the host
+docker volume inspect rekono_nginx
+
+# Copy your certificate files into the volume
+docker run --rm \
+  -v rekono_nginx:/etc/nginx/tls \
+  -v /path/to/your/certs:/src:ro \
+  alpine sh -c "cp /src/rekono.crt /etc/nginx/tls/rekono.crt && cp /src/rekono.key /etc/nginx/tls/rekono.key"
+
+# Restart Nginx to apply the new certificate
+docker compose restart nginx
+```
+
+Nginx expects the following file names inside `/etc/nginx/tls/`:
+
+| File | Description |
+|---|---|
+| `rekono.crt` | Full-chain certificate (PEM format) |
+| `rekono.key` | Private key (PEM format) |
+
+## Volumes
+
+Docker Compose manages the following named volumes. All data is persisted between restarts and upgrades.
+
+| Volume | Used by | Purpose |
+|---|---|---|
+| `postgres_18` | `postgres` | PostgreSQL 18 data directory for all Rekono data. |
+| `postgres` | `rekono-upgrade` | Legacy PostgreSQL 14 data directory from Rekono 1.x. After a successful upgrade this volume contains a compressed backup (`rekono-14-backup.sql.gz`) rather than a live database. |
+| `nginx` | `nginx`, `rekono-upgrade` | Stores the Nginx TLS certificate and private key so they survive container recreations. |
+| `rekono` | `initializer`, workers, `backend` | Rekono home directory: contains wordlist files, generated reports, and the encryption key. |
+| `wordlists_seclists` | `initializer`, `tasks-worker`, `executions-worker` | Mounted at `/usr/share/seclists` — populated with SecLists wordlists used by scanning tools. |
+| `wordlists_dirb` | `initializer`, `tasks-worker`, `executions-worker` | Mounted at `/usr/share/dirb/wordlists` — populated with Dirb wordlists used by directory brute-force tools. |
+
+<Warning>
+  Do not delete the `postgres_18` volume unless you intend to wipe all Rekono data. The `postgres` volume (legacy) is safe to remove after you have verified a successful 1.x → 2.x migration.
+</Warning>
+
+## Networks
+
+The Compose file defines two networks to control traffic flow:
+
+| Network | Type | Services | Purpose |
+|---|---|---|---|
+| `internal` | Internal (no external routing) | `postgres`, `valkey`, `initializer`, `rekono-upgrade`, all workers, `backend`, `frontend`, `nginx` | Private backplane for inter-service communication. Containers on this network cannot initiate connections to the internet. |
+| `external` | Standard bridge | `tasks-worker`, `executions-worker`, `findings-worker`, `monitor-worker`, `telegram-bot`, `backend`, `nginx` | Provides internet access for workers that need to reach external targets during scans, fetch CVE data, or communicate with the Telegram API. |
+
+<Note>
+  `postgres`, `valkey`, and `frontend` are **not** attached to the `external` network, so they have no direct internet access. The `backend` container uses `extra_hosts: host.docker.internal:host-gateway` to allow tools to reach services running on the Docker host itself.
+</Note>

@@ -1,0 +1,165 @@
+---
+title: 'Generate Security Assessment Reports'
+sidebarTitle: 'Reports'
+description: 'Export Rekono findings as polished PDF, JSON, or XML deliverables using the built-in template or a custom PDF template you provide in config.yaml.'
+---
+
+Rekono's reporting system lets you export the findings from any project, target, or task into a structured document you can share with clients, stakeholders, or internal teams. Reports are generated asynchronously in the background, so requesting a large report never blocks the UI or the API. Once ready, the file can be downloaded directly or — in the case of PDF reports — delivered via a notification to the requesting user.
+
+## What Reports Include
+
+A Rekono report captures the full picture of what a scan found, organized by scope and severity. Depending on the format and the filters you apply, a report can include any combination of:
+
+- **OSINT data** — passive reconnaissance findings such as IPs, domains, virtual hosts, emails, and ASNs
+- **Hosts** — discovered IP addresses with OS fingerprinting, geolocation, and VirusTotal reputation data
+- **Ports** — open ports with their service names and transport protocols
+- **Paths** — web endpoints and file-sharing directories found on services
+- **Technologies** — software detected on ports, with version numbers and references
+- **Credentials** — exposed emails, usernames, and secrets
+- **Vulnerabilities** — CVE-linked and unnamed vulnerabilities with CVSS scores, EPSS probability, and CWE identifiers, sorted by severity
+- **Exploits** — public exploits targeting detected technologies or vulnerabilities
+
+PDF reports additionally include:
+
+- A **project summary** with overall finding statistics
+- **Per-target statistics** with finding counts broken down by severity (`critical`, `high`, `medium`, `low`, `info`)
+- **Credential exposure counts** classified as high risk (exposed secrets) or low risk (exposed usernames)
+
+## Generating a Report
+
+### From the UI
+
+Navigate to the project, target, or task you want to report on, open the Reports section, choose a format, and click **Generate**. The report moves from `Pending` to `Ready` once the background thread finishes writing the file. You will receive a Telegram message and an email when the report is available.
+
+### From the API
+
+```bash
+POST /api/reports/
+Content-Type: application/json
+
+{
+  "project": 1,
+  "format": "pdf",
+  "only_true_positives": false,
+  "include_findings_from_user_input": false,
+  "finding_types": ["Vulnerability", "Exploit", "Credential"]
+}
+```
+
+The response immediately returns a `Report` object with `status: "Pending"`. The file is written in a background thread and the status transitions to `Ready` (or `Error` if generation fails).
+
+<Accordion title="Request fields">
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `project` | One of three | The project whose findings to include. |
+| `target` | One of three | A single target's findings only. |
+| `task` | One of three | A single task execution's findings only. |
+| `format` | Yes | `"pdf"`, `"json"`, or `"xml"`. |
+| `only_true_positives` | No | When `true`, includes only findings triaged as `True Positive`. Defaults to including `Untriaged`, `True Positive`, and `Won't Fix`. |
+| `include_findings_from_user_input` | No | When `true`, includes findings entered manually by auditors. Defaults to `false`. |
+| `finding_types` | No | List of finding types to include: `OSINT`, `Host`, `Port`, `Path`, `Technology`, `Credential`, `Vulnerability`, `Exploit`. PDF reports always include all types. |
+
+</Accordion>
+
+Once the report is ready, download the file:
+
+```bash
+GET /api/reports/{id}/download/
+```
+
+To remove a report and its generated file:
+
+```bash
+DELETE /api/reports/{id}/
+```
+
+<Note>
+A report cannot be deleted while its status is `Pending`. Wait for it to reach `Ready` or `Error` before deleting.
+</Note>
+
+### Report statuses
+
+| Status | Meaning |
+|--------|---------|
+| `Pending` | The file is being written in a background thread. |
+| `Ready` | The file is available for download. |
+| `Error` | Generation failed; the file was not created. |
+
+## Report Formats
+
+<Tabs>
+  <Tab title="PDF">
+    The PDF report renders the findings using an HTML template processed by **xhtml2pdf**. It includes a project overview, per-target statistics with severity breakdowns, and detailed finding sections organized by host. The output is a fully formatted document suitable for client delivery.
+
+    The PDF format is always scoped to all finding types — the `finding_types` filter has no effect on PDF output.
+  </Tab>
+  <Tab title="JSON">
+    Findings are exported as a JSON object with one key per finding type, each containing an array of finding records. Vulnerabilities are sorted by severity (highest first), ports by port number, and OSINT data alphabetically by value.
+
+    ```json
+    {
+      "vulnerability": [
+        {
+          "id": 42,
+          "name": "Log4Shell",
+          "cve": "CVE-2021-44228",
+          "severity": 5,
+          "cvss_base_score": 10.0,
+          "epss_score": 0.97,
+          "is_fixed": false
+        }
+      ],
+      "host": [...],
+      "port": [...]
+    }
+    ```
+  </Tab>
+  <Tab title="XML">
+    Findings are exported as an XML document with one element per finding, using the finding type as the element name. Each finding field becomes a child element with its value as text content.
+
+    ```xml
+    <findings>
+      <vulnerability>
+        <id>42</id>
+        <name>Log4Shell</name>
+        <cve>CVE-2021-44228</cve>
+        <severity>5</severity>
+      </vulnerability>
+    </findings>
+    ```
+  </Tab>
+</Tabs>
+
+## Custom PDF Templates
+
+By default, Rekono uses the built-in HTML template located at `backend/reporting/templates/pdf-report.html`. This template covers the standard deliverable format with project summary, severity statistics, and host-organized findings.
+
+To use a custom template, set the `reports.pdf-template` option in `config.yaml`:
+
+```yaml
+reports:
+  pdf-template: /rekono/my-custom-template.html
+```
+
+When this option is set, Rekono loads the specified template instead of the built-in one. The template receives the same context variables:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `project` | `Project` | The project being reported. |
+| `targets` | `list[Target]` | Targets included in the report. |
+| `findings` | `dict` | Findings grouped by target ID and by host. |
+| `stats` | `dict` | Severity counts across the whole report (`critical`, `high`, `medium`, `low`, `info`). |
+| `stats_by_target` | `dict` | Same severity counts, keyed by target ID. |
+
+<Note>
+The default template covers the standard deliverable format. Custom templates must be valid HTML files that xhtml2pdf can render. Set `reports.pdf-template` to `null` (or omit the key) to fall back to the built-in template.
+</Note>
+
+## DefectDojo Export
+
+In addition to on-demand reports, Rekono can automatically forward every finding to a **DefectDojo** instance as scans complete. This is configured per project through the `DefectDojoSync` integration, which maps a Rekono project to a DefectDojo product and engagement.
+
+When a scan finishes, all findings from that execution are translated into DefectDojo's import format — including CVSS vectors, CWE IDs, severity levels, and triage status — and pushed to the configured product. The `reimport` option merges findings into an existing test rather than creating a new one for each execution, and `close_old_findings` automatically closes DefectDojo findings that Rekono no longer detects.
+
+DefectDojo export runs in the `findings` worker queue immediately after enrichment, so findings appear in DefectDojo with their full CVE context, not just the raw tool output.

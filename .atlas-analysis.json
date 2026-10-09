@@ -1,0 +1,129 @@
+{
+  "projectType": "saas",
+  "projectName": "Rekono",
+  "projectDescription": "Rekono is an offensive security platform that automates attack surface discovery by chaining hacking tools, managing findings, and delivering vulnerability intelligence in one collaborative workspace.",
+  "theme": "aspen",
+  "primaryColor": "#7e6496",
+  "lightColor": "#2a0d45",
+  "darkColor": "#aad2e1",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/projects-and-targets",
+              "concepts/tools-and-configurations",
+              "concepts/processes-and-tasks",
+              "concepts/findings"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/vulnerability-management",
+              "features/alerts-and-notifications",
+              "features/reports",
+              "features/metrics",
+              "features/telegram-bot"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/config-file",
+              "configuration/integrations",
+              "configuration/users-and-roles",
+              "configuration/wordlists"
+            ]
+          },
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "self-hosting/docker-compose",
+              "self-hosting/upgrade",
+              "self-hosting/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/authentication"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "api-reference/projects",
+              "api-reference/targets",
+              "api-reference/tasks",
+              "api-reference/executions",
+              "api-reference/findings",
+              "api-reference/processes",
+              "api-reference/tools",
+              "api-reference/alerts",
+              "api-reference/reports"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automated tool chaining — findings from one tool feed directly into the next",
+    "19 integrated hacking tools covering OSINT, port scanning, web enumeration, SSL/TLS, CVE scanning, and exploitation",
+    "Unified finding deduplication and vulnerability management with triage, false-positive tracking, and automatic resolution",
+    "CVE enrichment from NVD, EPSS, OSV, GHSA, VulnCheck, and CVE Crowd trending scores",
+    "Scheduled and repeating scans for continuous attack surface monitoring",
+    "Alerts with email and Telegram notifications triggered by user-defined finding rules",
+    "Telegram bot for launching scans and reviewing findings from a mobile device",
+    "PDF report generation with custom templates",
+    "DefectDojo and VirusTotal integrations for downstream vulnerability management",
+    "Full REST API with OpenAPI schema, Swagger UI, and API token authentication",
+    "Multi-user platform with role-based access, MFA, and per-project membership",
+    "Docker Compose deployment with separate workers for tasks, executions, findings, and monitoring"
+  ],
+  "publicApiSurface": [
+    "POST /api/security/login/ — obtain JWT tokens",
+    "POST /api/security/refresh/ — refresh access token",
+    "POST /api/security/logout/ — invalidate tokens",
+    "GET/POST /api/projects/ — list and create projects",
+    "GET/PUT/DELETE /api/projects/{id}/ — manage a project",
+    "GET/POST /api/targets/ — list and create targets",
+    "GET/POST /api/tasks/ — list and create scan tasks",
+    "GET /api/tasks/latest/ — fetch the most recent tasks",
+    "GET /api/executions/ — list executions",
+    "GET /api/osint/, /api/hosts/, /api/ports/, /api/paths/, /api/technologies/, /api/vulnerabilities/, /api/credentials/, /api/exploits/ — finding resources",
+    "GET /api/hosts/latest/, /api/vulnerabilities/latest/ — latest finding shortcuts",
+    "GET/POST /api/processes/ — list and create recon processes",
+    "GET/POST /api/steps/ — manage process steps",
+    "GET /api/tools/ — list available tools",
+    "GET /api/configurations/ — list tool configurations",
+    "GET/POST /api/alerts/ — manage notification alerts",
+    "GET/POST /api/reports/ — generate and list reports",
+    "GET /api/stats/* — metrics endpoints (host, port, vulnerability, evolution, triaging, etc.)",
+    "GET/POST /api/api-tokens/ — manage API tokens",
+    "GET/POST /api/wordlists/ — manage custom wordlists",
+    "GET/POST /api/authentications/ — manage target authentications",
+    "GET/POST /api/http-headers/ — manage custom HTTP headers",
+    "GET/POST /api/users/ — user administration",
+    "GET/PUT /api/profile/ — current user profile",
+    "GET /api/schema/swagger-ui/ — interactive API docs"
+  ]
+}

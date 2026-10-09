@@ -1,0 +1,259 @@
+---
+title: 'REST API Endpoints for Executions'
+sidebarTitle: 'Executions'
+description: 'Query tool execution records to see which tools ran, what commands were used, their status, duration, and the output they produced.'
+---
+
+Rekono **Executions** are the atomic records of a single tool configuration running against a target. Each task spawns one or more executions — one per configuration in a process, or just one for a single-tool task. This page documents the read-only REST endpoints that let you inspect execution status, retrieve tool output, and download report files.
+
+<Note>
+All endpoints require a valid Bearer token. Executions are read-only through the API; they are created automatically when a task is enqueued. Only `GET` requests are supported.
+</Note>
+
+---
+
+## Execution Status Values
+
+Each execution moves through the following statuses over its lifetime:
+
+| Value | Meaning |
+|-------|---------|
+| `Requested` | Queued, waiting for a worker to pick it up |
+| `Running` | The tool process is currently executing |
+| `Completed` | The tool finished and its output was parsed for findings |
+| `Skipped` | The execution never ran (tool missing, unresolvable arguments, or task rejected) |
+| `Cancelled` | Stopped before finishing by a cancel request |
+| `Error` | The tool process failed or crashed |
+
+---
+
+## List Executions
+
+Return a paginated list of all executions visible to the authenticated user. Supports free-text search and a rich set of ordering options, including the `started` annotation that groups executions that have not yet begun.
+
+```
+GET /api/executions/
+```
+
+**Query Parameters**
+
+<ParamField query="task" type="integer">
+  Filter executions by their parent task ID.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by execution status. One of: `Requested`, `Running`, `Completed`,
+  `Skipped`, `Cancelled`, `Error`.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Free-text search over target value, process name, tool name, and
+  configuration name.
+</ParamField>
+
+<ParamField query="ordering" type="string">
+  Sort field. Prefix with `-` for descending. Allowed values: `id`, `task`,
+  `configuration`, `configuration__tool`, `creation`, `enqueued_at`, `start`,
+  `started`, `end`.
+</ParamField>
+
+<ParamField query="page" type="integer">
+  Page number for paginated results.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/executions/?task=42&ordering=-start"
+```
+
+**Response — 200 OK**
+
+```json
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 15,
+      "task": 42,
+      "configuration": {
+        "id": 5,
+        "name": "Nmap SYN",
+        "tool": { "id": 2, "name": "Nmap", "output_format": "xml" }
+      },
+      "output_plain": "Starting Nmap 7.94 ...\nNmap done: 1 IP address scanned",
+      "executed_command": "nmap -sS -p- corp.example.com",
+      "skipped_reason": null,
+      "has_report": true,
+      "status": "Completed",
+      "start": "2025-06-01T10:00:05Z",
+      "end": "2025-06-01T10:03:22Z",
+      "defectdojo_test_id": null,
+      "osint": [],
+      "host": [1],
+      "port": [3, 4],
+      "path": [],
+      "technology": [],
+      "credential": [],
+      "vulnerability": [],
+      "exploit": []
+    }
+  ]
+}
+```
+
+---
+
+## Get an Execution
+
+Retrieve the full details of a single execution, including its tool output, executed command, and all finding IDs it produced.
+
+```
+GET /api/executions/{id}/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the execution to retrieve.
+</ParamField>
+
+**Example**
+
+```bash
+curl -s \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/executions/15/"
+```
+
+**Response — 200 OK**
+
+<ResponseField name="id" type="integer">
+  Primary key of the execution.
+</ResponseField>
+
+<ResponseField name="task" type="integer">
+  ID of the parent task that spawned this execution.
+</ResponseField>
+
+<ResponseField name="configuration" type="object">
+  Full configuration object, including the embedded `tool` with its `id`,
+  `name`, and `output_format`.
+</ResponseField>
+
+<ResponseField name="output_plain" type="string or null">
+  Raw text written to standard output by the tool. May be large for
+  verbose tools.
+</ResponseField>
+
+<ResponseField name="executed_command" type="string or null">
+  The command that was actually run, with any secrets redacted.
+</ResponseField>
+
+<ResponseField name="skipped_reason" type="string or null">
+  Human-readable explanation of why the execution was skipped, or `null`
+  when it was not skipped.
+</ResponseField>
+
+<ResponseField name="has_report" type="boolean">
+  Whether the tool wrote a structured report file that can be downloaded via
+  the `/report` action.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current lifecycle status. See the [status table](#execution-status-values)
+  above.
+</ResponseField>
+
+<ResponseField name="start" type="string or null (ISO 8601)">
+  Timestamp when the tool process started.
+</ResponseField>
+
+<ResponseField name="end" type="string or null (ISO 8601)">
+  Timestamp when the execution reached a terminal status.
+</ResponseField>
+
+<ResponseField name="defectdojo_test_id" type="integer or null">
+  ID of the DefectDojo test created for this execution when the project is
+  synchronized with DefectDojo.
+</ResponseField>
+
+<ResponseField name="osint" type="array of integers">
+  IDs of OSINT findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="host" type="array of integers">
+  IDs of Host findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="port" type="array of integers">
+  IDs of Port findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="path" type="array of integers">
+  IDs of Path findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="technology" type="array of integers">
+  IDs of Technology findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="credential" type="array of integers">
+  IDs of Credential findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="vulnerability" type="array of integers">
+  IDs of Vulnerability findings produced by this execution.
+</ResponseField>
+
+<ResponseField name="exploit" type="array of integers">
+  IDs of Exploit findings produced by this execution.
+</ResponseField>
+
+---
+
+## Download Execution Report
+
+Download the structured report file written by the tool of a completed execution. The filename is derived from the execution ID and the tool name, e.g. `execution-15-Nmap.xml`.
+
+```
+GET /api/executions/{id}/report/
+```
+
+<ParamField path="id" type="integer" required>
+  Primary key of the execution whose report to download.
+</ParamField>
+
+<Warning>
+Returns `400 Bad Request` when the execution status is not `Completed`. Returns `404 Not Found` when the tool did not write a structured report file — check `has_report` on the execution first.
+</Warning>
+
+**Example**
+
+```bash
+curl -s -OJ \
+  -H "Authorization: Bearer <token>" \
+  "https://rekono.example.com/api/executions/15/report/"
+```
+
+**Response — 200 OK** — the raw report file is returned as an attachment with the `Content-Disposition: attachment` header set.
+
+<Tabs>
+  <Tab title="Success">
+    The report binary or text file is streamed back. The `Content-Disposition`
+    header includes the suggested filename, e.g.:
+    ```
+    Content-Disposition: attachment; filename="execution-15-Nmap.xml"
+    ```
+  </Tab>
+  <Tab title="Not Completed (400)">
+    ```json
+    { "execution": "Execution is not completed" }
+    ```
+  </Tab>
+  <Tab title="No Report File (404)">
+    Empty body with HTTP status `404`.
+  </Tab>
+</Tabs>

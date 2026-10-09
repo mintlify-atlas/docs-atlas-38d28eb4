@@ -1,0 +1,176 @@
+---
+title: 'Launch Scans and Review Findings via Telegram'
+sidebarTitle: 'Telegram Bot'
+description: "Rekono's Telegram bot lets you start scans, receive alerts, and browse findings from your phone without opening the web interface."
+---
+
+Rekono's Telegram bot brings the platform's core capabilities to your Telegram client, turning any chat into a lightweight operations terminal. From your phone you can launch a tool execution or a full process against a target, receive real-time alert notifications the moment a vulnerability is found, and browse the most recent discoveries — all without opening a browser. The bot runs as a dedicated Docker service and shares the same alert configuration as the web interface, so notifications are consistent across channels.
+
+## What the Bot Can Do
+
+The bot organizes its commands into four sections:
+
+<CardGroup cols={2}>
+  <Card title="Basic" icon="circle-info">
+    Account linking (`/start`), help (`/help`), unlinking (`/logout`), and cancelling an in-progress operation (`/cancel`).
+  </Card>
+  <Card title="Projects" icon="folder">
+    Select a project that following commands will work against (`/selectproject`), display the currently selected project (`/showproject`), and clear the selection (`/clearproject`).
+  </Card>
+  <Card title="Targets" icon="crosshairs">
+    Create a new target in the selected project (`/newtarget`) and add a target port with optional authentication (`/newport`).
+  </Card>
+  <Card title="Tasks" icon="play">
+    Launch a single tool against a target (`/tool`) or run a full process — a chained pipeline of tools — against a target (`/process`). Both conversations guide you step by step through selecting the target, tool or process, intensity, and optional wordlist.
+  </Card>
+</CardGroup>
+
+Readers (non-auditor accounts) can use `/start`, `/help`, and `/logout`. All task and project-management commands require the Auditor or Admin role.
+
+## Setting Up the Bot
+
+<Steps>
+  <Step title="Create a bot in Telegram">
+    Open a conversation with [@BotFather](https://t.me/BotFather) and run `/newbot`. Follow the prompts to choose a name and username for your bot. BotFather will give you an API token that looks like `123456789:ABCdef...`.
+  </Step>
+  <Step title="Configure the token in Rekono">
+    In the Rekono web interface, navigate to **Settings → Telegram**. An Admin user can `PUT /api/telegram-settings/1/` with the token:
+
+    ```bash
+    PUT /api/telegram-settings/1/
+    Content-Type: application/json
+
+    {
+      "token": "123456789:ABCdef..."
+    }
+    ```
+
+    The token is stored encrypted in the database. The settings endpoint also exposes `bot` (the bot's display name as confirmed by Telegram) and `is_available` (whether Telegram accepts the current token) as read-only fields.
+  </Step>
+  <Step title="Restart the telegram-bot service">
+    The bot process reads the token at startup. If you updated the token while the container was running, restart it:
+
+    ```bash
+    docker compose restart telegram-bot
+    ```
+
+    The `telegram-bot` service runs the Django management command `manage.py telegram_bot`, which keeps the bot polling Telegram for new messages until it is stopped.
+  </Step>
+</Steps>
+
+## Linking Your Account
+
+The bot never associates a chat with an account automatically — you must complete a secure two-step linking process to prevent one Telegram user from binding a chat to someone else's account.
+
+<Steps>
+  <Step title="Send /start to the bot">
+    Open a **private chat** with the bot (account linking is blocked in group chats for security reasons) and send `/start`. The bot responds with a one-time token:
+
+    ```text
+    Welcome to Rekono Bot!
+
+    Link this chat with your Rekono account by adding the
+    following token to your Rekono profile:
+
+    <one-time-token>
+
+    Then, run /help to start hacking!
+    ```
+  </Step>
+  <Step title="Redeem the token in Rekono">
+    In the Rekono web interface, go to your profile settings and enter the token, or call the API:
+
+    ```bash
+    POST /api/telegram-chats/
+    Content-Type: application/json
+
+    {
+      "otp": "<one-time-token>"
+    }
+    ```
+
+    Rekono validates the token, confirms that it has not expired, and links the Telegram chat to your account. The token is immediately invalidated after use — it cannot be reused.
+  </Step>
+  <Step title="Confirm the link">
+    The bot sends a welcome message to the newly linked chat, and Rekono sends a confirmation email through SMTP if an email server is configured. You can now run all commands available to your role.
+  </Step>
+</Steps>
+
+To unlink your account, send `/logout` in the bot chat. Your `TelegramChat` record is deleted and all future notifications to that chat stop immediately.
+
+## Using the Bot Commands
+
+### Basic commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Generate a one-time linking token (private chat only). |
+| `/help` | Display all commands available to your role, grouped by section. |
+| `/logout` | Unlink the chat from your Rekono account. |
+| `/cancel` | Abort the current multi-step conversation. |
+
+### Project selection
+
+The bot remembers your selected project across conversations, so you only have to pick it once per session:
+
+| Command | Description |
+|---------|-------------|
+| `/selectproject` | Browse your projects and select one as the active context. |
+| `/showproject` | Display the name of the currently selected project. |
+| `/clearproject` | Forget the selected project. |
+
+### Creating targets
+
+| Command | Description |
+|---------|-------------|
+| `/newtarget` | Create a new target in the selected project (asks for project if not set). |
+| `/newport` | Add a port to an existing target and optionally configure authentication for it. |
+
+### Launching scans
+
+The `/tool` conversation walks you through selecting a target, choosing a tool and its configuration, setting the intensity, optionally specifying a wordlist, and providing any required inputs (technology, vulnerability). Once you confirm, the task is queued and you receive a summary notification when the execution completes.
+
+The `/process` conversation follows the same flow but launches a full tool-chain process instead of a single tool.
+
+Both conversations respect the project selection — if you have already selected a project, that step is skipped automatically.
+
+## Telegram Service in Docker
+
+The Telegram bot runs as a separate container in the Docker Compose stack, independent from the web API and the RQ workers:
+
+```yaml
+telegram-bot:
+  restart: always
+  image: pablosnt/rekono-backend:latest
+  command: uv run --no-dev manage.py telegram_bot
+  hostname: telegram_bot
+  container_name: telegram-bot
+  volumes:
+    - rekono:/rekono
+    - ./config.yaml:/rekono/config.yaml:ro
+  networks:
+    - internal
+    - external
+  depends_on:
+    valkey:
+      condition: service_healthy
+    initializer:
+      condition: service_completed_successfully
+  environment:
+    - RKN_DB_HOST=postgres
+    - RKN_DB_USER=postgres
+    - RKN_DB_PASSWORD=postgres
+    - RKN_RQ_HOST=valkey
+```
+
+The service connects to the same PostgreSQL database and Valkey (RQ) instance as the rest of the platform. It needs access to the `external` network so it can reach the Telegram API, and to the `internal` network so it can enqueue tasks into the RQ workers when you launch a scan from the chat.
+
+If the bot is not needed, you can stop it without affecting the rest of the platform:
+
+```bash
+docker compose stop telegram-bot
+```
+
+<Note>
+The Telegram bot and the web notification system share the same alert configuration. An alert with a subscribed user who has a linked Telegram chat delivers the notification to both their email address and their Telegram chat simultaneously. There is no separate alert configuration for the bot.
+</Note>

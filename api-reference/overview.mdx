@@ -1,0 +1,170 @@
+---
+title: 'Rekono REST API Reference'
+sidebarTitle: 'Overview'
+description: 'Rekono exposes a full REST API for every platform feature; browse endpoints via the built-in Swagger UI or automate with JWT or API token authentication.'
+---
+
+Rekono exposes a comprehensive REST API built on top of **Django REST Framework (DRF)**, covering every platform feature — from project and target management to task scheduling, findings retrieval, and reporting. The OpenAPI 3 schema is generated automatically by **drf-spectacular**, keeping the documentation in sync with the codebase at all times. Every resource the Rekono web interface uses is available through this API, making full programmatic control of the platform straightforward.
+
+## Base URL
+
+All API endpoints share the same root path:
+
+```text
+https://<your-host>/api/
+```
+
+Replace `<your-host>` with the hostname or IP address of your Rekono deployment. In a local Docker Compose setup the default is `http://localhost`.
+
+## Interactive Documentation
+
+Rekono ships two browser-based API explorers out of the box. Both are publicly accessible — no authentication is required to browse them.
+
+<CardGroup cols={2}>
+  <Card title="Swagger UI" icon="layer-group">
+    **`GET /api/schema/swagger-ui/`**
+
+    Try out requests directly in the browser. Authenticate with your JWT access token or API token using the **Authorize** button at the top of the page.
+  </Card>
+  <Card title="ReDoc" icon="book-open">
+    **`GET /api/schema/redoc/`**
+
+    A read-only, three-panel reference view that makes it easy to browse schemas and response shapes without leaving the docs.
+  </Card>
+</CardGroup>
+
+## Machine-Readable Schema
+
+Download the raw OpenAPI 3 schema document for use with code generators, API clients, or CI linting tools:
+
+```bash
+GET /api/schema/
+```
+
+The response is a YAML document. Append `?format=json` to receive JSON instead.
+
+<Note>
+  The schema endpoints (`/api/schema/`, `/api/schema/swagger-ui/`, and `/api/schema/redoc/`) are explicitly granted `AllowAny` permission and require no authentication token.
+</Note>
+
+## API Endpoint Groups
+
+Every major Rekono resource has its own set of endpoints. The table below links to the dedicated reference page for each group.
+
+<CardGroup cols={2}>
+  <Card title="Projects" icon="folder" href="/api-reference/projects">
+    Create and manage projects that scope all targets, tasks, and findings.
+  </Card>
+  <Card title="Targets" icon="crosshairs" href="/api-reference/targets">
+    Define the hosts, domains, URLs, and IP ranges in scope for a project.
+  </Card>
+  <Card title="Tasks" icon="list-check" href="/api-reference/tasks">
+    Schedule and monitor hacking-tool executions against your targets.
+  </Card>
+  <Card title="Executions" icon="terminal" href="/api-reference/executions">
+    Inspect individual tool runs and their raw output within a task.
+  </Card>
+  <Card title="Findings" icon="magnifying-glass" href="/api-reference/findings">
+    Query and triage vulnerabilities, ports, endpoints, and credentials.
+  </Card>
+  <Card title="Processes" icon="gears" href="/api-reference/processes">
+    Define reusable tool chains that automate multi-step attack workflows.
+  </Card>
+  <Card title="Tools" icon="wrench" href="/api-reference/tools">
+    Browse the catalogue of supported security tools and their configurations.
+  </Card>
+  <Card title="Alerts" icon="bell" href="/api-reference/alerts">
+    Configure notifications for new findings and task completion events.
+  </Card>
+  <Card title="Reports" icon="file-lines" href="/api-reference/reports">
+    Generate and download project reports in multiple export formats.
+  </Card>
+</CardGroup>
+
+## Response Format
+
+Every Rekono API response body is **JSON**. List endpoints return a paginated envelope using DRF's `PageNumberPagination`:
+
+```json
+{
+  "count": 142,
+  "next": "https://your-host/api/findings/?page=3",
+  "previous": "https://your-host/api/findings/?page=1",
+  "results": [
+    { "id": 51, "..." : "..." }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `count` | integer | Total number of objects matching the query. |
+| `next` | string \| null | Full URL of the next page, or `null` on the last page. |
+| `previous` | string \| null | Full URL of the previous page, or `null` on the first page. |
+| `results` | array | The objects in the current page. |
+
+The default page size is **25** items. Use the `page` and `limit` query parameters to navigate:
+
+```text
+GET /api/findings/?page=2&limit=50
+```
+
+The maximum allowed value for `limit` is **1000**.
+
+## Error Responses
+
+All errors follow a consistent JSON structure. The most common HTTP status codes are:
+
+<AccordionGroup>
+  <Accordion title="400 Bad Request — Validation error">
+    Returned when the request body fails serializer validation. The response body maps field names to lists of error messages:
+
+    ```json
+    {
+      "name": ["This field is required."],
+      "expiration": ["Expiration must be a future date."]
+    }
+    ```
+  </Accordion>
+  <Accordion title="401 Unauthorized — Unauthenticated">
+    Returned when no valid credential is provided or when the JWT access token has expired:
+
+    ```json
+    {
+      "detail": "Authentication credentials were not provided."
+    }
+    ```
+
+    Refresh your access token via `POST /api/security/refresh/` and retry.
+  </Accordion>
+  <Accordion title="403 Forbidden — Insufficient permissions">
+    Returned when the authenticated user does not have the role required for the operation (e.g. a Reader trying to delete a project):
+
+    ```json
+    {
+      "detail": "You do not have permission to perform this action."
+    }
+    ```
+  </Accordion>
+  <Accordion title="404 Not Found — Object does not exist">
+    Returned when the requested resource ID does not exist or is not visible to the authenticated user:
+
+    ```json
+    {
+      "detail": "Not found."
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Filtering and Ordering
+
+All list endpoints support query-parameter filtering via **django-filter**, full-text search via the `search` parameter, and result ordering via the `ordering` parameter.
+
+```text
+GET /api/findings/?severity=critical&ordering=-id
+GET /api/tasks/?search=nmap
+GET /api/targets/?page=1&limit=10
+```
+
+Each endpoint documents its own filterable fields, searchable fields, and orderable fields. The default ordering for all resources is newest-first (`-id`).
