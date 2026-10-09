@@ -1,7 +1,7 @@
 ---
-title: 'REST API Endpoints for Projects'
+title: 'Rekono REST API — Project and Membership Endpoints'
 sidebarTitle: 'Projects'
-description: 'Manage security engagement projects via the Rekono API; list, create, update, and delete projects and retrieve top projects by finding count.'
+description: 'Manage security engagement projects via the Rekono API; list, create, update, and delete projects and retrieve top projects by vulnerability count.'
 ---
 
 Rekono organizes every security assessment inside a **Project** — a workspace that groups targets, tasks, and findings together. This page documents every REST endpoint available for the `Project` resource, including how to create projects, manage their members, and surface the most active ones through the top-projects ranking.
@@ -16,7 +16,7 @@ All endpoints require a valid Bearer token in the `Authorization` header. Authen
 
 Retrieve a paginated list of all projects the authenticated user is a member of. Supports full-text search over `name`, `description`, and `targets__target`, plus filtering and ordering by `id`, `name`, and `owner`.
 
-```
+```http
 GET /api/projects/
 ```
 
@@ -72,7 +72,7 @@ curl -s \
 
 Create a new project. The requesting user is automatically set as the `owner` and added as the first member. A trending-CVE alert is created and enabled for the project immediately.
 
-```
+```http
 POST /api/projects/
 ```
 
@@ -143,7 +143,7 @@ curl -s -X POST \
 
 Retrieve the full details of a single project by its ID.
 
-```
+```http
 GET /api/projects/{id}/
 ```
 
@@ -167,7 +167,7 @@ curl -s \
 
 Replace the editable fields of an existing project. Ownership and membership are managed through the dedicated members sub-endpoint, not here.
 
-```
+```http
 PUT /api/projects/{id}/
 ```
 
@@ -195,7 +195,7 @@ curl -s -X PUT \
 
 Permanently delete a project. Cascades to all targets, tasks, executions, and findings belonging to it.
 
-```
+```http
 DELETE /api/projects/{id}/
 ```
 
@@ -223,7 +223,7 @@ Add or remove a user from a project's member list. When a member is added they a
 The project owner (`owner`) can never be removed from their own project. Attempting to do so returns `400 Bad Request`.
 </Warning>
 
-```
+```http
 POST   /api/projects/{id}/members/{member_id}/
 DELETE /api/projects/{id}/members/{member_id}/
 ```
@@ -262,7 +262,7 @@ Return projects ranked by their current attack surface exposure. Projects are so
 Fixed findings and false-positive vulnerabilities are excluded from the ranking so remediation work immediately improves a project's position.
 </Info>
 
-```
+```http
 GET /api/projects/top/
 ```
 

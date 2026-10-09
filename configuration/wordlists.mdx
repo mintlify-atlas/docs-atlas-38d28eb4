@@ -1,7 +1,7 @@
 ---
-title: 'Manage Wordlists for Brute-Force and Enumeration'
+title: 'Manage Wordlists for Brute-Force Enumeration in Rekono'
 sidebarTitle: 'Wordlists'
-description: 'Upload custom wordlists or use pre-installed SecLists and Dirb lists to supply brute-force enumeration tools like Dirsearch and Gobuster.'
+description: 'Upload custom wordlists or use pre-installed SecLists and Dirb sets to supply enumeration tools like Dirsearch and Gobuster during Rekono task execution.'
 ---
 
 Rekono manages wordlists as first-class resources that are attached to tasks and fed directly to enumeration tools at runtime. Rather than hardcoding file paths in tool configurations, you register wordlists once in Rekono and then select them by name when creating a task, giving every member of a project access to a shared library of tested, version-controlled word files.
@@ -19,7 +19,7 @@ Rekono wordlists supply the input files that enumeration and brute-force tools i
   </Card>
 </CardGroup>
 
-Rekono passes the resolved file path of the selected wordlist directly to the tool's command-line argument at execution time via the `WORDLIST` input keyword mapping (`_parse_mapping = {InputKeyword.WORDLIST: "path"}`). Only wordlists whose type matches the argument's filter are offered as valid inputs for a given tool configuration.
+Rekono passes the resolved file path of the selected wordlist directly to the tool's command-line argument at execution time via the `WORDLIST` input keyword mapping. Only wordlists whose `type` matches the argument's filter are offered as valid inputs for a given tool configuration.
 
 ## Pre-Installed Wordlists
 
@@ -27,7 +27,7 @@ The Docker Compose stack mounts two widely-used wordlist collections as named vo
 
 <Tabs>
   <Tab title="SecLists">
-    **Volume:** `wordlists_seclists`  
+    **Volume:** `wordlists_seclists`
     **Mount path:** `/usr/share/seclists`
 
     SecLists is the most comprehensive collection of security-testing word files, covering common passwords, usernames, web content paths, fuzzing payloads, sensitive data patterns, and more. Rekono mounts it in the `initializer` and `tasks-worker` containers and registers the files it finds there as system wordlists.
@@ -38,7 +38,7 @@ The Docker Compose stack mounts two widely-used wordlist collections as named vo
     ```
   </Tab>
   <Tab title="Dirb wordlists">
-    **Volume:** `wordlists_dirb`  
+    **Volume:** `wordlists_dirb`
     **Mount path:** `/usr/share/dirb/wordlists`
 
     The classic Dirb wordlist set ships with many Linux penetration-testing distributions and provides curated lists of common web content paths organized by target type (Apache, IIS, generic CGI, etc.).
@@ -51,25 +51,28 @@ The Docker Compose stack mounts two widely-used wordlist collections as named vo
 </Tabs>
 
 <Note>
-  `wordlists_seclists` and `wordlists_dirb` are Docker named volumes defined in `docker-compose.yml`. Their contents persist across container restarts and upgrades. The `initializer` service also mounts `wordlists_seclists` and `wordlists_dirb` to populate them on first run.
+  `wordlists_seclists` and `wordlists_dirb` are Docker named volumes defined in `docker-compose.yml`. Their contents persist across container restarts and upgrades. The `initializer` service also mounts both volumes to populate them on first run.
 </Note>
 
-Pre-installed wordlists have no `checksum` stored in the database, so their integrity is not verified on every use. Custom uploaded wordlists do store a checksum, which is re-verified each time the wordlist is selected as an input to confirm the file has not been modified since upload.
+Pre-installed wordlists have no checksum stored in the database, so their integrity is not verified on every use. Custom uploaded wordlists do store a checksum, which is re-verified each time the wordlist is selected as an input to confirm the file has not been modified since upload.
 
 ## Custom Wordlists
 
 Any Admin or Auditor can upload their own wordlist files through the API or the UI. Uploaded wordlists are stored on the shared `rekono` volume so all worker containers can reach them.
 
-**Wordlist model fields:**
+**Wordlist fields returned by the API:**
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `id` | integer | Unique identifier of the wordlist. |
 | `name` | string (max 100) | Human-readable label, unique across all wordlists. Used to identify the wordlist in the task creation form. |
 | `type` | choice | `Endpoint` or `Subdomain` — determines which tools can use the wordlist. |
-| `file` | file upload | The wordlist file (write-only at creation). Rekono validates size, extension, and MIME type before storing the file. |
-| `path` | string | Absolute file-system path where the file is stored (set automatically, unique). |
 | `size` | integer | Number of lines (words) in the file, computed on upload. |
-| `owner` | user | The user who uploaded the wordlist. Only the owner can update or delete it. |
+| `owner` | object | The user who uploaded the wordlist. `null` for default system wordlists. Only the owner (or an Admin) can update or delete the wordlist. |
+| `liked` | boolean | Whether the current user has liked this wordlist. |
+| `likes` | integer | Total number of users who have liked this wordlist. |
+
+The `file` field is write-only and only accepted at creation time — the file content is stored on disk and cannot be replaced after upload.
 
 <Tabs>
   <Tab title="Upload via API">
@@ -112,7 +115,7 @@ Any Admin or Auditor can upload their own wordlist files through the API or the 
 
 ## Assigning Wordlists to Tasks
 
-When creating a task, you select one or more wordlists to supply to the tool executions via the `wordlists` many-to-many field on the `Task` model. The execution engine filters the selected wordlists at runtime — only those whose `type` matches the `filter` condition of a tool's argument input are passed to that specific tool.
+When creating a task, you select one or more wordlists to supply to the tool executions via the `wordlists` many-to-many field on the `Task` model. The execution engine filters the selected wordlists at runtime — only those whose `type` matches the filter condition of a tool's argument input are passed to that specific tool.
 
 For example, if you select both an `Endpoint` wordlist and a `Subdomain` wordlist when creating a task that runs Dirsearch, only the `Endpoint` wordlist will be passed to Dirsearch; the `Subdomain` wordlist is silently skipped because it does not match the argument filter.
 

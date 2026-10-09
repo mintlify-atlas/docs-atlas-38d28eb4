@@ -1,7 +1,7 @@
 ---
-title: 'Processes, Steps, and Tasks Explained'
+title: 'Rekono Pentesting Processes, Steps, and Scheduled Tasks'
 sidebarTitle: 'Processes & Tasks'
-description: 'Processes define reusable scan methodologies as ordered tool configurations; tasks run those processes against a specific target on demand or on a schedule.'
+description: 'Processes bundle tool configurations into reusable methodologies; tasks apply them to a target immediately, on a schedule, or on a repeating interval.'
 ---
 
 Rekono's automation model separates *what to scan* from *how to scan it*. A **process** encodes a methodology — a collection of tool configurations that together cover a full assessment workflow. A **task** applies that methodology to a specific target, either immediately or on a schedule, and optionally repeats it at regular intervals to track an evolving attack surface. This page explains processes, steps, and tasks in detail, including every field on the `Task` model, the scheduling and repetition options, and how a task moves through its lifecycle.
@@ -58,6 +58,7 @@ A **Task** is the execution request that pairs a target with either a process or
 
 ```python
 class Task(BaseModel):
+    rq_job_id             = models.TextField(max_length=50, blank=True, null=True)
     target                = models.ForeignKey(Target, related_name="tasks", on_delete=models.CASCADE)
     process               = models.ForeignKey(Process, ..., blank=True, null=True)
     configuration         = models.ForeignKey(Configuration, ..., blank=True, null=True)

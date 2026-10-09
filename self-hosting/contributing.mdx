@@ -1,5 +1,5 @@
 ---
-title: 'Contributing to Rekono Development'
+title: 'Contributing to Rekono: Setup, Branching, and Testing'
 sidebarTitle: 'Contributing'
 description: 'Set up the Rekono development environment for backend, frontend, and email templates, and follow the branching strategy to contribute.'
 ---
@@ -276,6 +276,97 @@ You can also run them manually:
 </Tabs>
 
 All backend code (except tests and migrations) must include docstrings following the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings). Frontend code must **not** include comments, as they would be exposed to end users.
+
+## Agentic Development
+
+The [pablosnt/skills](https://github.com/pablosnt/skills) repository contains skills specialized in Rekono development — covering integrations, frontend pages, unit tests, and docstrings — that make coding with AI agents significantly more accurate. The `skills-lock.json` file in the repository root pins every skill this project uses. Install them into your environment with:
+
+```bash
+npx skills@latest experimental_install
+```
+
+## Common Contributions
+
+### Adding a New Hacking Tool
+
+A tool is defined entirely by data in the `backend/tools/` directory. The relationships between the data entities are:
+
+```mermaid
+flowchart LR
+    Tool -->|supports| Intensity
+    Tool -->|can run| Configuration
+    Configuration -->|accepts| Argument
+    Configuration -->|discovers| Output
+    Argument -->|can be filled by| Input
+    Input -->|of type| InputType["Input type"]
+    Output -->|of type| InputType
+```
+
+A **tool** can do several things, each one a **configuration** with its own command template. Every placeholder in that template is an **argument**, and each argument declares the **inputs** that can fill it (in priority order), pointing to the **input type** that provides the data. **Intensities** map Rekono intensity levels to the arguments of the tool. **Outputs** declare what the configuration discovers, enabling a process to chain its configurations.
+
+Data files and how they are loaded:
+
+| File | Loaded by |
+|---|---|
+| `data/1_tools.json` | A migration, since configurations reference tools |
+| `data/3_configurations.json` | A migration, since steps and executions reference configurations |
+| `fixtures/2_intensities.json` | Django fixtures, recreated on every `migrate` |
+| `fixtures/4_arguments.json` | Django fixtures, recreated on every `migrate` |
+| `fixtures/5_inputs.json` | Django fixtures, recreated on every `migrate` |
+| `fixtures/6_outputs.json` | Django fixtures, recreated on every `migrate` |
+
+Steps to add a new tool:
+
+1. Add the tool to `data/1_tools.json` and its configurations to `data/3_configurations.json`, with the next free `pk` and a `migration` key naming the migration that will create them.
+2. Add its intensities, arguments, inputs, and outputs to the fixture files. Arguments are written with the input keywords from `backend/framework/enums.py`, for example `-p {ports_commas}`.
+3. Create the migration in `backend/tools/migrations/`, copying the pattern of `0004_remove_argument_unique_argument_and_more.py`. It writes only the entries whose `migration` key names it, using `update_or_create`.
+4. Add the tool to the default processes in a new migration of the `processes` app.
+5. Create the parser in `backend/tools/parsers/`, extending `BaseParser` and implementing `_parse`. The class name is the tool name without spaces, which is how it is resolved.
+6. Create an executor in `backend/tools/executors/` **only if the tool misbehaves or has special requirements** (for example, Nikto writes its report to a non-standard location). Most tools do not need one.
+7. Add unit tests: place an anonymized tool report in `backend/tests/data/reports/<tool_name>/` and write the test case in `backend/tests/parsers/`.
+8. Add the tool installation to `docker/Dockerfile`.
+9. Add the tool's icon domain to the `img-src` directive of the CSP in `docker/nginx/nginx.conf`.
+10. Add the tool to the [README](https://github.com/pablosnt/rekono/blob/main/README.md).
+
+### Updating a Tool
+
+Intensities, arguments, inputs, and outputs are reloaded after every `migrate`, so editing the fixture file is sufficient for those.
+
+Tools and configurations are not reloaded automatically. Edit the entry and create a new migration to ensure that users who already have the old tool metadata in their database receive the updated metadata when they upgrade.
+
+### Removing a Tool
+
+**Identifiers must stay consistent — entries are never deleted.** Deleting a configuration would cascade-delete the scans and executions that used it. Instead, mark the tool's configurations as `deprecated` following the [update a tool](#updating-a-tool) procedure, and remove their arguments, inputs, outputs, and intensities from the fixture files. A tool with no active configurations disappears from the API while all historical data that referenced it continues to work.
+
+### Adding a New Integration
+
+Integrations with external platforms live in `backend/platforms/` and extend one of these base classes from `backend/framework/platforms.py`:
+
+- `BaseIntegration` — to enrich findings or sync them elsewhere (for example, VirusTotal or Defect-Dojo).
+- `BaseCveProvider` — to enrich vulnerabilities with CVE data (for example, NVD NIST or OSV).
+- `BaseNotification` — to notify users (for example, SMTP or Telegram).
+
+An integration that requires nothing from the user is a single file (for example, `platforms/osv.py`). One that requires credentials or settings is a Django app (for example, `platforms/virustotal/`) with its own model, serializer, view, URLs, and migration.
+
+In both cases, register the new integration by:
+
+1. Adding its entry to the `Integration` table in a new migration of the `integrations` app. The `key` must be the class name in lowercase, as that is how the integration locates itself.
+2. Adding the integration to the appropriate list in `backend/findings/queues.py`.
+3. Adding tests in `backend/tests/platforms/` and updating `backend/tests/test_integrations.py`.
+4. Adding its settings form to `frontend/app/components/admin/integrations.vue`.
+5. Adding its icon domain to the `img-src` directive of the CSP in `docker/nginx/nginx.conf`.
+
+## Way of Code
+
+Following these principles keeps the codebase consistent and maintainable:
+
+- **Keep the code style**, and reuse what is already there instead of duplicating it.
+- **Keep it simple.** Do not overcomplicate the code.
+- **Document the backend, don't comment the frontend.** Backend code needs docstrings; frontend comments would be exposed to users.
+- **Add a CHANGELOG entry** with your change under the appropriate version heading.
+- **Test your code**, and keep the total coverage above 95%.
+- **Security first.** Rekono is a cybersecurity project — do not introduce vulnerabilities or add vulnerable dependencies.
+- **All pull requests** must pass CI checks and receive at least one approval before being merged.
 
 <Note>
   If you find a security vulnerability in Rekono, **do not open a public issue or pull request**. Follow the instructions in `SECURITY.md` to report it privately. Public disclosure before a fix is available puts all Rekono deployments at risk.

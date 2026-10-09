@@ -1,5 +1,5 @@
 ---
-title: 'REST API Endpoints for Processes and Steps'
+title: 'Rekono REST API — Scan Processes and Step Endpoints'
 sidebarTitle: 'Processes'
 description: 'Create reusable scan methodologies as named processes composed of ordered tool configuration steps, and manage them via the Rekono REST API.'
 ---
@@ -8,21 +8,25 @@ Rekono processes are reusable scan methodologies — named collections of tool c
 
 ## Authentication
 
-All endpoints require an authenticated session. Include your token in the `Authorization` header:
+All endpoints require a valid token in the `Authorization` header. Use your JWT access token (`Bearer`) for interactive sessions or an API token (`Token`) for programmatic access:
 
 ```http
-Authorization: Token <your-api-token>
+Authorization: Bearer <access_token>
 ```
 
-Requests without a valid token receive `401 Unauthorized`. Role-based permissions apply: only the process owner may modify or delete a process they created. Platform-provided (built-in) processes have no owner and cannot be modified via the API.
+```http
+Authorization: Token <api_token>
+```
+
+Only the process owner may modify or delete a process they created. Platform-provided (built-in) processes have no owner and cannot be modified via the API.
+
+See the [Authentication guide](/api-reference/authentication) for how to obtain and refresh tokens.
 
 ---
 
 ## Processes
 
 ### List Processes
-
-<br />
 
 **`GET /api/processes/`**
 
@@ -111,8 +115,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 
 ### Create a Process
 
-<br />
-
 **`POST /api/processes/`**
 
 Creates a new process owned by the authenticated user. The user becomes the owner and is the only one who can later update or delete it.
@@ -165,8 +167,6 @@ curl -s -X POST \
 
 ### Get a Process
 
-<br />
-
 **`GET /api/processes/{id}/`**
 
 Retrieves a single process by its numeric ID.
@@ -187,8 +187,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 ---
 
 ### Update a Process
-
-<br />
 
 **`PUT /api/processes/{id}/`**
 
@@ -232,8 +230,6 @@ curl -s -X PUT \
 
 ### Delete a Process
 
-<br />
-
 **`DELETE /api/processes/{id}/`**
 
 Permanently removes a process and all of its steps. Only the process owner may call this endpoint.
@@ -265,8 +261,6 @@ curl -s -X DELETE \
 Steps bind a tool configuration to a process. Each combination of process and configuration must be unique — adding the same configuration twice to the same process returns a validation error. Steps carry no ordering of their own; the execution engine determines the run order from the stage of each configuration and the findings that earlier configurations produce.
 
 ### List Steps
-
-<br />
 
 **`GET /api/steps/`**
 
@@ -322,8 +316,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 ---
 
 ### Add a Step
-
-<br />
 
 **`POST /api/steps/`**
 
@@ -381,8 +373,6 @@ curl -s -X POST \
 ---
 
 ### Remove a Step
-
-<br />
 
 **`DELETE /api/steps/{id}/`**
 

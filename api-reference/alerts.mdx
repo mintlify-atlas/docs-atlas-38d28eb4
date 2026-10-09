@@ -1,5 +1,5 @@
 ---
-title: 'REST API Endpoints for Alerts'
+title: 'Rekono REST API — Finding Alert Rules and Subscriptions'
 sidebarTitle: 'Alerts'
 description: 'Create and manage finding alert rules via the Rekono API to receive notifications when specific hosts, ports, or CVEs appear in a project.'
 ---
@@ -8,13 +8,19 @@ Rekono alerts are per-project notification rules that fire when a scan execution
 
 ## Authentication
 
-All endpoints require a valid session token:
+All endpoints require a valid token in the `Authorization` header. Use your JWT access token (`Bearer`) for interactive sessions or an API token (`Token`) for programmatic access:
 
 ```http
-Authorization: Token <your-api-token>
+Authorization: Bearer <access_token>
+```
+
+```http
+Authorization: Token <api_token>
 ```
 
 Alerts are scoped to projects. Only members of a project can create, read, update, or delete its alerts. Only the alert owner can update or delete a specific alert.
+
+See the [Authentication guide](/api-reference/authentication) for how to obtain and refresh tokens.
 
 ---
 
@@ -43,8 +49,6 @@ The `item` field on an alert must be one of the following string values. Rekono 
 ## Endpoints
 
 ### List Alerts
-
-<br />
 
 **`GET /api/alerts/`**
 
@@ -117,8 +121,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 
 ### Create an Alert
 
-<br />
-
 **`POST /api/alerts/`**
 
 Creates a new alert on a project. The requesting user becomes the alert's owner and is automatically subscribed. New alerts are always created in the `enabled` state — it cannot be set to `false` at creation time.
@@ -175,8 +177,6 @@ curl -s -X POST \
 
 ### Get an Alert
 
-<br />
-
 **`GET /api/alerts/{id}/`**
 
 Retrieves a single alert by its numeric ID. The requesting user must be a member of the project the alert belongs to.
@@ -197,8 +197,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 ---
 
 ### Update an Alert
-
-<br />
 
 **`PUT /api/alerts/{id}/`**
 
@@ -233,8 +231,6 @@ curl -s -X PUT \
 ---
 
 ### Delete an Alert
-
-<br />
 
 **`DELETE /api/alerts/{id}/`**
 

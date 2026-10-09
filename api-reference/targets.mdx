@@ -1,5 +1,5 @@
 ---
-title: 'REST API Endpoints for Targets'
+title: 'Rekono REST API — Targets and Target Ports Endpoints'
 sidebarTitle: 'Targets'
 description: 'Add and manage the domains, IP addresses, CIDR networks, and URLs that Rekono scans; create, list, and delete targets via the REST API.'
 ---
@@ -34,7 +34,7 @@ Tools that only accept a single host (not a network) will be skipped automatical
 
 Return a paginated list of targets belonging to projects the authenticated user is a member of. Supports free-text search on `target` and ordering by `id`, `target`, or `type`.
 
-```
+```http
 GET /api/targets/
 ```
 
@@ -95,7 +95,7 @@ curl -s \
 
 Add a new target to a project. Rekono resolves and validates the value — IP addresses are checked for routability, domains are DNS-resolved, and networks/ranges are expanded — and auto-assigns the `type`.
 
-```
+```http
 POST /api/targets/
 ```
 
@@ -165,7 +165,7 @@ curl -s -X POST \
 
 Retrieve the full details of a single target.
 
-```
+```http
 GET /api/targets/{id}/
 ```
 
@@ -189,7 +189,7 @@ curl -s \
 
 Permanently delete a target. Cascades to all tasks and findings scoped to this target.
 
-```
+```http
 DELETE /api/targets/{id}/
 ```
 
@@ -219,7 +219,7 @@ A `TargetPort` scopes a task to a single port (and optional sub-path) on a targe
 
 ### List Target Ports
 
-```
+```http
 GET /api/target-ports/
 ```
 
@@ -251,7 +251,8 @@ curl -s \
       "id": 12,
       "target": 7,
       "port": 443,
-      "path": "/admin"
+      "path": "/admin",
+      "authentication": null
     }
   ]
 }
@@ -261,7 +262,7 @@ curl -s \
 
 ### Create a Target Port
 
-```
+```http
 POST /api/target-ports/
 ```
 
@@ -306,4 +307,8 @@ curl -s -X POST \
 
 <ResponseField name="path" type="string or null">
   The sub-path, or `null` when the service is at root.
+</ResponseField>
+
+<ResponseField name="authentication" type="object or null">
+  Service credential associated with this port (name, type, and masked secret), or `null` when no credential is configured.
 </ResponseField>

@@ -1,7 +1,7 @@
 ---
-title: 'User Management, Roles, and MFA in Rekono'
+title: 'Rekono User Management, Roles, and MFA Configuration'
 sidebarTitle: 'Users & Roles'
-description: 'Manage user accounts, assign project roles, and enforce two-factor authentication to control who can access and scan your projects.'
+description: 'Manage user accounts, assign platform roles, and enforce two-factor authentication to control who can access and operate your Rekono projects.'
 ---
 
 Rekono ships with a complete identity and access management system built into the platform — covering role-based access control, project membership, profile settings, multi-factor authentication via TOTP or email, and named API tokens for programmatic access. All of these controls are available to administrators through the API and the UI.
@@ -59,21 +59,26 @@ Every authenticated user can read and update their own profile without requiring
     ```bash
     GET /api/profile/
     ```
-    Returns the current user's `username`, `first_name`, `last_name`, `email`, `pending_email`, `mfa` (boolean), `notification_scope`, `email_notifications`, and `telegram_notifications`.
+    Returns the current user's `id`, `username`, `first_name`, `last_name`, `email`, `date_joined`, `last_login`, `mfa` (boolean), `role`, `telegram_chat`, `notification_scope`, `email_notifications`, and `telegram_notifications`.
   </Tab>
   <Tab title="Update profile">
     ```bash
     PUT /api/profile/
     ```
-    Accepts any subset of the writable profile fields. For example, to switch notification scope:
+    Accepts writable profile fields. For example, to update the notification preferences:
 
     ```json
     {
+      "first_name": "Jane",
+      "last_name": "Smith",
+      "email": "jane@example.com",
       "notification_scope": "All executions",
       "email_notifications": true,
       "telegram_notifications": false
     }
     ```
+
+    Updating `email` starts a verification workflow — the new address is stored as pending and only applied once the user confirms it with the OTP sent to that address. The `username`, `date_joined`, `last_login`, `mfa`, `role`, and `telegram_chat` fields are read-only through this endpoint.
 
     **Notification scope choices:**
 
@@ -100,7 +105,7 @@ Rekono supports two-factor authentication using TOTP (Time-Based One-Time Passwo
     ```bash
     POST /api/profile/mfa/register/
     ```
-    Generates a fresh TOTP secret and returns a `provisioning_uri` — scan this QR code with your authenticator app (Google Authenticator, Aegis, etc.). This is the only moment the secret is ever exposed; it is stored encrypted in the database.
+    Generates a fresh TOTP secret and returns a `url` — the provisioning URI to scan with your authenticator app (Google Authenticator, Aegis, etc.). This is the only moment the secret is ever exposed; it is stored encrypted in the database.
   </Step>
   <Step title="Enable MFA">
     ```bash
@@ -134,13 +139,13 @@ Rekono supports two-factor authentication using TOTP (Time-Based One-Time Passwo
     POST /api/security/mfa/email/
     ```
 
-    The code is sent to the account's email address. Submit it to `POST /api/security/mfa/` in place of a TOTP code. Only OTPs issued for the `MFA` scope are accepted as a second factor — OTPs from other workflows (invitation, password reset) cannot be replayed here.
+    The code is sent to the account's email address. Submit it to `POST /api/security/mfa/` in place of a TOTP code. Only OTPs issued for the `MFA` scope are accepted as a second factor — OTPs sent for other workflows (invitation, password reset, email verification) cannot be replayed here.
   </Step>
   <Step title="Disable MFA">
     ```bash
     POST /api/profile/mfa/disable/
     ```
-    Requires a valid TOTP code as proof of account ownership before disabling:
+    Requires a valid TOTP code or email OTP as proof of account ownership before disabling:
 
     ```json
     { "otp": "123456" }
@@ -193,7 +198,7 @@ API tokens let scripts, CI pipelines, and third-party tools call the Rekono API 
     Immediately revokes the token. There is no way to recover a deleted token.
   </Tab>
   <Tab title="Use a token">
-    Pass the token in the `Authorization` header as a Bearer token:
+    Pass the token in the `Authorization` header:
 
     ```bash
     curl -H "Authorization: Token <your-token>" https://rekono.example.com/api/projects/

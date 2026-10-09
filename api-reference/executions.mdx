@@ -1,7 +1,7 @@
 ---
-title: 'REST API Endpoints for Executions'
+title: 'Rekono REST API — Tool Execution Records and Reports'
 sidebarTitle: 'Executions'
-description: 'Query tool execution records to see which tools ran, what commands were used, their status, duration, and the output they produced.'
+description: 'Query individual tool execution records in Rekono — inspect status, raw output, executed commands, finding IDs, and download structured report files.'
 ---
 
 Rekono **Executions** are the atomic records of a single tool configuration running against a target. Each task spawns one or more executions — one per configuration in a process, or just one for a single-tool task. This page documents the read-only REST endpoints that let you inspect execution status, retrieve tool output, and download report files.
@@ -31,7 +31,7 @@ Each execution moves through the following statuses over its lifetime:
 
 Return a paginated list of all executions visible to the authenticated user. Supports free-text search and a rich set of ordering options, including the `started` annotation that groups executions that have not yet begun.
 
-```
+```http
 GET /api/executions/
 ```
 
@@ -83,7 +83,9 @@ curl -s \
       "configuration": {
         "id": 5,
         "name": "Nmap SYN",
-        "tool": { "id": 2, "name": "Nmap", "output_format": "xml" }
+        "stage": "ENUMERATION",
+        "default": true,
+        "tool": { "id": 2, "name": "Nmap", "command": "nmap", "version": "7.94", "reference": "https://nmap.org", "icon": null }
       },
       "output_plain": "Starting Nmap 7.94 ...\nNmap done: 1 IP address scanned",
       "executed_command": "nmap -sS -p- corp.example.com",
@@ -112,7 +114,7 @@ curl -s \
 
 Retrieve the full details of a single execution, including its tool output, executed command, and all finding IDs it produced.
 
-```
+```http
 GET /api/executions/{id}/
 ```
 
@@ -139,8 +141,7 @@ curl -s \
 </ResponseField>
 
 <ResponseField name="configuration" type="object">
-  Full configuration object, including the embedded `tool` with its `id`,
-  `name`, and `output_format`.
+  Configuration object including `id`, `name`, `stage`, and `default` fields, plus an embedded `tool` object with `id`, `name`, `command`, `version`, `reference`, and `icon`.
 </ResponseField>
 
 <ResponseField name="output_plain" type="string or null">
@@ -218,7 +219,7 @@ curl -s \
 
 Download the structured report file written by the tool of a completed execution. The filename is derived from the execution ID and the tool name, e.g. `execution-15-Nmap.xml`.
 
-```
+```http
 GET /api/executions/{id}/report/
 ```
 
@@ -244,7 +245,7 @@ curl -s -OJ \
   <Tab title="Success">
     The report binary or text file is streamed back. The `Content-Disposition`
     header includes the suggested filename, e.g.:
-    ```
+```text
     Content-Disposition: attachment; filename="execution-15-Nmap.xml"
     ```
   </Tab>

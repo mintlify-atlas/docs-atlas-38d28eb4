@@ -1,7 +1,7 @@
 ---
-title: 'REST API Endpoints for Findings'
+title: 'Rekono REST API — All Finding Types Endpoint Guide'
 sidebarTitle: 'Findings'
-description: "Query all finding types — OSINT, hosts, ports, paths, technologies, vulnerabilities, credentials, and exploits — from Rekono's REST API."
+description: 'Query all finding types — OSINT, hosts, ports, paths, technologies, vulnerabilities, credentials, and exploits — via the Rekono REST API.'
 ---
 
 Rekono **Findings** are the intelligence produced by tool executions. They are organized in a chain that mirrors the stages of an assessment: OSINT data feeds host discovery, hosts expose ports, ports surface paths and technologies, and technologies lead to vulnerabilities and exploits. This page documents the REST endpoints for each finding type, their response fields, and how to triage or fix a finding.
@@ -94,7 +94,7 @@ Vulnerabilities carry a severity level. The API uses the textual name.
 
 Passive reconnaissance data gathered from public sources.
 
-```
+```http
 GET /api/osint/
 GET /api/osint/{id}/
 ```
@@ -130,7 +130,7 @@ GET /api/osint/{id}/
 
 For `IP` or `Domain` findings you can create a scannable target directly from the OSINT data.
 
-```
+```http
 POST /api/osint/{id}/target/
 ```
 
@@ -154,7 +154,7 @@ curl -s -X POST \
 
 Network hosts discovered during enumeration, identified by their IP address.
 
-```
+```http
 GET /api/hosts/
 GET /api/hosts/{id}/
 GET /api/hosts/latest/
@@ -243,7 +243,7 @@ GET /api/hosts/latest/
 
 Open ports discovered on hosts, with service identification.
 
-```
+```http
 GET /api/ports/
 GET /api/ports/{id}/
 ```
@@ -301,7 +301,7 @@ GET /api/ports/{id}/
 
 Web endpoints and file-share paths discovered on ports.
 
-```
+```http
 GET /api/paths/
 GET /api/paths/{id}/
 ```
@@ -345,7 +345,7 @@ GET /api/paths/{id}/
 
 Software and frameworks detected running on ports.
 
-```
+```http
 GET /api/technologies/
 GET /api/technologies/{id}/
 ```
@@ -378,10 +378,6 @@ GET /api/technologies/{id}/
   Extra details reported by the identifying tool.
 </ResponseField>
 
-<ResponseField name="reference" type="string or null">
-  Link to the technology's documentation or vendor page.
-</ResponseField>
-
 <ResponseField name="hacktricks_link" type="string or null">
   Link to the HackTricks guide for this technology.
 </ResponseField>
@@ -404,7 +400,7 @@ GET /api/technologies/{id}/
 
 Security weaknesses found in technologies or ports, enriched with CVE, CVSS, EPSS, and EUVD data.
 
-```
+```http
 GET /api/vulnerabilities/
 GET /api/vulnerabilities/{id}/
 GET /api/vulnerabilities/latest/
@@ -573,7 +569,7 @@ curl -s \
 
 Exposed credentials (emails, usernames, passwords) discovered in technologies or public sources.
 
-```
+```http
 GET /api/credentials/
 GET /api/credentials/{id}/
 ```
@@ -616,7 +612,7 @@ GET /api/credentials/{id}/
 
 Public exploit code or modules targeting a vulnerability or technology.
 
-```
+```http
 GET /api/exploits/
 GET /api/exploits/{id}/
 ```

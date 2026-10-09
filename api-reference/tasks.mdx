@@ -1,5 +1,5 @@
 ---
-title: 'REST API Endpoints for Tasks'
+title: 'Rekono REST API — Task Scheduling and Scan Control'
 sidebarTitle: 'Tasks'
 description: 'Create and manage scan tasks — single tool runs or full processes — with scheduling, repetition, intensity, and wordlist configuration.'
 ---
@@ -43,7 +43,7 @@ Used together with `repeat_in` to schedule recurring tasks.
 
 Return a paginated list of tasks accessible to the authenticated user. Supports free-text search over target value, process name, and tool/configuration name.
 
-```
+```http
 GET /api/tasks/
 ```
 
@@ -112,7 +112,7 @@ curl -s \
 
 Create and immediately enqueue a new task. You must supply either `process_id` or `configuration_id`; if both are given, `configuration_id` takes precedence and the process is discarded.
 
-```
+```http
 POST /api/tasks/
 ```
 
@@ -278,7 +278,7 @@ curl -s -X POST \
 
 Retrieve the full details of a single task.
 
-```
+```http
 GET /api/tasks/{id}/
 ```
 
@@ -302,7 +302,7 @@ curl -s \
 
 Cancel a running or scheduled task. The task record is preserved for history; in-flight executions are stopped in their worker and queued ones are removed from the queue.
 
-```
+```http
 DELETE /api/tasks/{id}/
 ```
 
@@ -330,7 +330,7 @@ curl -s -X DELETE \
 
 Create and enqueue a new task with the same target, configuration or process, intensity, wordlists, and seeded inputs as an existing task. The new task is owned by the requesting user and is never scheduled or set to repeat, even if the original was.
 
-```
+```http
 POST /api/tasks/{id}/repeat/
 ```
 
@@ -358,7 +358,7 @@ curl -s -X POST \
 
 Return the tasks that started most recently. Scheduled tasks that have not yet begun are excluded.
 
-```
+```http
 GET /api/tasks/latest/
 ```
 

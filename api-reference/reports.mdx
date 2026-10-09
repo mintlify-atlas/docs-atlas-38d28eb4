@@ -1,20 +1,26 @@
 ---
-title: 'REST API Endpoints for Reports'
+title: 'Rekono REST API — Security Report Generation and Download'
 sidebarTitle: 'Reports'
-description: 'Generate security assessment reports in PDF format via the Rekono API, with all project findings, statistics, and vulnerability details included.'
+description: 'Generate security assessment reports in PDF, JSON, or XML format via the Rekono API, with project findings, statistics, and vulnerability details.'
 ---
 
 Rekono reports export the findings of a security assessment in a structured, shareable format. A report is always scoped to one of three levels — a **project**, a **target**, or a **task** — and can be generated in PDF, JSON, or XML. The file is produced asynchronously in a background thread; the API immediately returns a report object in `Pending` status, which transitions to `Ready` once the file is written. This page documents every REST endpoint for triggering, listing, downloading, and deleting reports.
 
 ## Authentication
 
-All endpoints require a valid session token:
+All endpoints require a valid token in the `Authorization` header. Use your JWT access token (`Bearer`) for interactive sessions or an API token (`Token`) for programmatic access:
 
 ```http
-Authorization: Token <your-api-token>
+Authorization: Bearer <access_token>
+```
+
+```http
+Authorization: Token <api_token>
 ```
 
 Only project members can request or read reports. Only the user who requested a report can download or delete it.
+
+See the [Authentication guide](/api-reference/authentication) for how to obtain and refresh tokens.
 
 ---
 
@@ -74,8 +80,6 @@ The `finding_types` parameter (JSON and XML only) accepts a subset of the follow
 ## Endpoints
 
 ### List Reports
-
-<br />
 
 **`GET /api/reports/`**
 
@@ -155,8 +159,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 ---
 
 ### Generate a Report
-
-<br />
 
 **`POST /api/reports/`**
 
@@ -246,8 +248,6 @@ curl -s -X POST \
 
 ### Get a Report
 
-<br />
-
 **`GET /api/reports/{id}/`**
 
 Retrieves the metadata for a single report. Poll this endpoint to check whether generation has completed before attempting a download.
@@ -284,8 +284,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 
 ### Download a Report
 
-<br />
-
 **`GET /api/reports/{id}/download/`**
 
 Downloads the generated report file. The response is a binary file attachment. The filename in the `Content-Disposition` header is a UUID with the format extension (e.g. `a1b2c3d4-....pdf`).
@@ -315,8 +313,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 ---
 
 ### Delete a Report
-
-<br />
 
 **`DELETE /api/reports/{id}/`**
 

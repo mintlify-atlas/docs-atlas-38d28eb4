@@ -1,5 +1,5 @@
 ---
-title: 'Rekono config.yaml Reference'
+title: 'Rekono config.yaml File Reference and Environment Variables'
 sidebarTitle: 'Config File'
 description: 'The config.yaml file controls the database, frontend URL, Redis queue, security settings, tool paths, and report templates for your Rekono instance.'
 ---
@@ -48,7 +48,7 @@ reports:
 
 <Accordion title="database — PostgreSQL connection">
 
-Rekono uses PostgreSQL 18 as its primary data store. All five keys are required when the database is not on the same host as the Django process.
+Rekono uses PostgreSQL as its primary data store. All five keys are required when the database is not on the same host as the Django process.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -79,12 +79,14 @@ Rekono dispatches tool executions, findings processing, monitoring, and Telegram
 
 </Accordion>
 
-<Accordion title="security — hosts and cookies">
+<Accordion title="security — hosts, cookies, and keys">
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `allowed-hosts` | list of strings | `[127.0.0.1, localhost, ::1]` | Django's `ALLOWED_HOSTS` list. Add every hostname or IP address that the backend will be reached at. Requests whose `Host` header doesn't match this list are rejected with HTTP 400. |
 | `cookies.secure` | boolean | `false` | Sets the `Secure` flag on the JWT session cookies. Set to `true` whenever the backend is served over HTTPS, which it always should be in production. |
+| `secret-key` | string | *(random)* | Django's `SECRET_KEY`. Randomly generated on every startup when not set; set a fixed value in production to keep sessions valid across restarts. |
+| `encryption-key` | string | `null` | Key used to encrypt sensitive data stored in the database (API tokens, platform credentials). Generated automatically on first run if not set. |
 
 </Accordion>
 
@@ -106,22 +108,33 @@ These paths tell Rekono where each bundled tool is installed. The Docker images 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `reports.pdf-template` | string or null | `null` | Absolute path to a custom Jinja2 HTML template that Rekono renders into PDF reports. When `null`, Rekono uses its built-in template. Supply a path here to brand reports with your own layout, logo, and styling. |
+| `reports.pdf-template` | string or null | `null` | Absolute path to a custom HTML template that Rekono renders into PDF reports. When `null`, Rekono uses its built-in template located in the reporting app. Supply a path here to brand reports with your own layout, logo, and styling. |
 
 </Accordion>
 
 ## Environment Variable Overrides
 
-Several config.yaml values can be overridden at runtime by environment variables. Variables defined in the Docker Compose file take precedence over the corresponding keys in `config.yaml`, which makes it easy to inject secrets from a `.env` file or a secrets manager without editing the YAML file.
+Every config.yaml value can also be set through an environment variable. Variables take precedence over the corresponding key in `config.yaml`, making it easy to inject secrets from a `.env` file or a secrets manager without editing the YAML file. The full list of supported environment variables is shown below.
 
 | Environment variable | Overrides | Notes |
 |----------------------|-----------|-------|
+| `REKONO_HOME` | *(home directory)* | Directory where Rekono stores wordlists, reports, and logs. Defaults to `/opt/rekono`. |
+| `RKN_DB_NAME` | `database.name` | Name of the PostgreSQL database. |
 | `RKN_DB_HOST` | `database.host` | Set to the container hostname `postgres` in the Compose stack. |
 | `RKN_DB_USER` | `database.user` | Set to `postgres` in the Compose stack. |
 | `RKN_DB_PASSWORD` | `database.password` | Set to `postgres` in the Compose stack — change in production. |
 | `RKN_RQ_HOST` | `rq.host` | Set to the container hostname `valkey` in the Compose stack. |
-| `RKN_ALLOWED_HOSTS` | `security.allowed-hosts` | Set to `*` in the `backend` service (Nginx handles host validation). |
-| `RKN_TRUSTED_PROXIES` | *(proxy count)* | Set to `1` in the `backend` service to trust the Nginx reverse proxy. |
+| `RKN_RQ_PORT` | `rq.port` | Port for the Valkey/Redis server. |
+| `RKN_FRONTEND_URL` | `frontend.url` | Public URL of the Nuxt frontend. |
+| `RKN_SECRET_KEY` | `security.secret-key` | Django secret key. |
+| `RKN_COOKIES_SECURE` | `security.cookies.secure` | Set to `true` when serving over HTTPS. |
+| `RKN_ALLOWED_HOSTS` | `security.allowed-hosts` | Set to `*` in the `backend` service (Nginx handles host validation). Accepts a space-, comma-, or semicolon-separated list. |
+| `RKN_TRUSTED_PROXIES` | *(proxy count)* | Number of trusted reverse proxies in front of Rekono. Set to `1` in the `backend` service to trust the Nginx reverse proxy. |
+| `RKN_CMSEEK_RESULTS` | `tools.cmseek.directory` | Override the CMSeeK installation directory. |
+| `RKN_LOG4J_SCAN_DIR` | `tools.log4j-scan.directory` | Override the log4j-scan installation directory. |
+| `RKN_SPRING4SHELL_SCAN_DIR` | `tools.spring4shell-scan.directory` | Override the spring4shell-scan installation directory. |
+| `RKN_EMAILHARVESTER_DIR` | `tools.emailharvester.directory` | Override the EmailHarvester installation directory. |
+| `RKN_GITTOOLS_DIR` | `tools.gittools.directory` | Override the GitTools installation directory. |
 | `DJANGO_SUPERUSER_EMAIL` | *(initializer)* | Email for the first admin account. Defaults to `rekono@rekono.dev`. |
 | `DJANGO_SUPERUSER_USERNAME` | *(initializer)* | Username for the first admin account. Defaults to `rekono`. |
 | `DJANGO_SUPERUSER_PASSWORD` | *(initializer)* | Password for the first admin account. Defaults to `rekono`. |
@@ -142,12 +155,12 @@ The `initializer` service in `docker-compose.yml` reads the three `DJANGO_SUPERU
     Place your edited `config.yaml` in the same directory as `docker-compose.yml` and it will be picked up automatically on the next `docker compose up`.
   </Tab>
   <Tab title="Local development">
-    When running the backend directly with `uv run manage.py runserver`, Rekono looks for `config.yaml` in the repository root — the same file that is committed to version control. The dev defaults (`host: 127.0.0.1`, `secure: false`) are suitable for local work.
+    When running the backend directly with `uv run manage.py runserver`, Rekono looks for `config.yaml` (or `config.yml`, `rekono.yaml`, `rekono.yml`) in the configured home directory. The dev defaults (`host: 127.0.0.1`, `secure: false`) are suitable for local work.
   </Tab>
 </Tabs>
 
 <Warning>
-  Never commit `database.user`, `database.password`, or any API key to version control. Use environment variables or a secrets manager to inject credentials at runtime, and keep the committed `config.yaml` with all sensitive keys set to `null`.
+  Never commit `database.user`, `database.password`, `security.secret-key`, or any API key to version control. Use environment variables or a secrets manager to inject credentials at runtime, and keep the committed `config.yaml` with all sensitive keys set to `null`.
 </Warning>
 
 <Tip>

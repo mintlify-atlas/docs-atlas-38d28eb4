@@ -1,5 +1,5 @@
 ---
-title: 'REST API Endpoints for Tools and Configurations'
+title: 'Rekono REST API — Tools and Configurations Endpoints'
 sidebarTitle: 'Tools'
 description: 'Query available hacking tools and their named configurations to understand what Rekono can run and what inputs each configuration accepts.'
 ---
@@ -12,11 +12,17 @@ Rekono tools are the security scanners and assessment utilities that the platfor
 
 ## Authentication
 
-All endpoints require a valid session token:
+All endpoints require a valid token in the `Authorization` header. Use your JWT access token (`Bearer`) for interactive sessions or an API token (`Token`) for programmatic access:
 
 ```http
-Authorization: Token <your-api-token>
+Authorization: Bearer <access_token>
 ```
+
+```http
+Authorization: Token <api_token>
+```
+
+See the [Authentication guide](/api-reference/authentication) for how to obtain and refresh tokens.
 
 ---
 
@@ -53,8 +59,6 @@ The `intensity` field on an `Intensity` object indicates how aggressive the exec
 ## Tools
 
 ### List Tools
-
-<br />
 
 **`GET /api/tools/`**
 
@@ -187,8 +191,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 
 ### Get a Tool
 
-<br />
-
 **`GET /api/tools/{id}/`**
 
 Retrieves a single tool by its numeric ID. Returns the same shape as each item in the list endpoint.
@@ -213,8 +215,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 A configuration is one named capability of a tool — for example, a default port scan or a vulnerability script sweep. Configurations are what processes are made of (via steps), and they are what tasks execute directly when a user picks a tool without choosing a specific configuration.
 
 ### List Configurations
-
-<br />
 
 **`GET /api/configurations/`**
 
@@ -320,8 +320,6 @@ curl -s -H "Authorization: Token $TOKEN" \
 ---
 
 ### Get a Configuration
-
-<br />
 
 **`GET /api/configurations/{id}/`**
 

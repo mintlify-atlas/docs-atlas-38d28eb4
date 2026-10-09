@@ -1,7 +1,7 @@
 ---
-title: 'Understanding Findings: The Rekono Data Model'
+title: 'Rekono Findings: Types, Triage, and CVE Enrichment'
 sidebarTitle: 'Findings'
-description: 'Findings are the structured results that tools produce — from raw OSINT data to confirmed vulnerabilities — deduplicated and linked across the attack surface.'
+description: 'Eight typed findings — OSINT through Exploit — are deduplicated, triaged, and auto-enriched with CVE severity, EPSS scores, and remediation steps.'
 ---
 
 Rekono converts every raw tool output into structured **findings** — typed records linked to the exact host, port, or technology where they were discovered. Rather than dumping execution logs at you, Rekono builds a living inventory of your target's attack surface: OSINT data feeding into hosts, hosts into ports, ports into paths and technologies, technologies into vulnerabilities, and vulnerabilities into exploits. Each type is a first-class Django model with its own fields, deduplication logic, triage status, and enrichment pipeline. This page covers every finding type, how they chain together, how duplicates are merged, and how vulnerabilities are enriched with CVE intelligence.
@@ -190,7 +190,7 @@ The `edb_id` field holds the Exploit Database identifier. Exploits are deduplica
 
 Findings form a tree rooted at the target. Each type is discovered from, and linked to, the finding that exposed it:
 
-```
+```text
 Target
 └── OSINT          (passive data about the target)
 └── Host           (IP address discovered for the target)

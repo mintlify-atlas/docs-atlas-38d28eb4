@@ -1,7 +1,7 @@
 ---
 title: 'Launch Scans and Review Findings via Telegram'
 sidebarTitle: 'Telegram Bot'
-description: "Rekono's Telegram bot lets you start scans, receive alerts, and browse findings from your phone without opening the web interface."
+description: "Rekono's Telegram bot lets auditors launch tool scans, receive real-time alerts, and manage targets and projects without opening the web interface."
 ---
 
 Rekono's Telegram bot brings the platform's core capabilities to your Telegram client, turning any chat into a lightweight operations terminal. From your phone you can launch a tool execution or a full process against a target, receive real-time alert notifications the moment a vulnerability is found, and browse the most recent discoveries — all without opening a browser. The bot runs as a dedicated Docker service and shares the same alert configuration as the web interface, so notifications are consistent across channels.
@@ -34,10 +34,10 @@ Readers (non-auditor accounts) can use `/start`, `/help`, and `/logout`. All tas
     Open a conversation with [@BotFather](https://t.me/BotFather) and run `/newbot`. Follow the prompts to choose a name and username for your bot. BotFather will give you an API token that looks like `123456789:ABCdef...`.
   </Step>
   <Step title="Configure the token in Rekono">
-    In the Rekono web interface, navigate to **Settings → Telegram**. An Admin user can `PUT /api/telegram-settings/1/` with the token:
+    In the Rekono web interface, navigate to **Settings → Telegram**. An Admin user can `PUT /api/telegram/settings/1/` with the token:
 
     ```bash
-    PUT /api/telegram-settings/1/
+    PUT /api/telegram/settings/1/
     Content-Type: application/json
 
     {
@@ -81,7 +81,7 @@ The bot never associates a chat with an account automatically — you must compl
     In the Rekono web interface, go to your profile settings and enter the token, or call the API:
 
     ```bash
-    POST /api/telegram-chats/
+    POST /api/telegram/link/
     Content-Type: application/json
 
     {

@@ -1,5 +1,5 @@
 ---
-title: 'Upgrade Rekono from 1.x to 2.x'
+title: 'Upgrade Guide: Rekono 1.x to 2.x with PostgreSQL 18'
 sidebarTitle: 'Upgrade'
 description: 'Migrate your PostgreSQL 14 database to PostgreSQL 18 and upgrade to Rekono 2.x with automatic migration via Docker Compose or a manual dump.'
 ---
@@ -66,9 +66,15 @@ The Docker Compose upgrade path is fully automatic. The `rekono-upgrade` service
     A successful migration produces output similar to:
 
     ```
-    rekono-upgrade  | Dumping PostgreSQL 14 database...
-    rekono-upgrade  | Restoring into PostgreSQL 18...
-    rekono-upgrade  | Migration complete.
+    rekono-upgrade  | [i] Migrating the PostgreSQL 14 data
+    rekono-upgrade  | [i] PostgreSQL 14 data migrated successfully. Backup available in /var/lib/postgresql/data/rekono-14-backup.sql.gz
+    rekono-upgrade exited with code 0
+    ```
+
+    On a **fresh installation** (no existing 1.x data), the service exits immediately with:
+
+    ```
+    rekono-upgrade  | [i] No PostgreSQL 14 data to be migrated
     rekono-upgrade exited with code 0
     ```
 

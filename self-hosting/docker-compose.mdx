@@ -1,5 +1,5 @@
 ---
-title: 'Deploy Rekono with Docker Compose'
+title: 'Rekono Docker Compose Deployment: Full Stack Setup'
 sidebarTitle: 'Docker Compose'
 description: 'Run the full Rekono stack — database, workers, frontend, and Nginx TLS proxy — with a single Docker Compose command on any Linux host.'
 ---
@@ -168,7 +168,7 @@ docker volume inspect rekono_nginx
 docker run --rm \
   -v rekono_nginx:/etc/nginx/tls \
   -v /path/to/your/certs:/src:ro \
-  alpine sh -c "cp /src/rekono.crt /etc/nginx/tls/rekono.crt && cp /src/rekono.key /etc/nginx/tls/rekono.key"
+  alpine sh -c "cp /src/certificate.crt /etc/nginx/tls/certificate.crt && cp /src/privatekey.key /etc/nginx/tls/privatekey.key"
 
 # Restart Nginx to apply the new certificate
 docker compose restart nginx
@@ -178,8 +178,8 @@ Nginx expects the following file names inside `/etc/nginx/tls/`:
 
 | File | Description |
 |---|---|
-| `rekono.crt` | Full-chain certificate (PEM format) |
-| `rekono.key` | Private key (PEM format) |
+| `certificate.crt` | Full-chain certificate (PEM format) |
+| `privatekey.key` | Private key (PEM format) |
 
 ## Volumes
 
@@ -208,5 +208,5 @@ The Compose file defines two networks to control traffic flow:
 | `external` | Standard bridge | `tasks-worker`, `executions-worker`, `findings-worker`, `monitor-worker`, `telegram-bot`, `backend`, `nginx` | Provides internet access for workers that need to reach external targets during scans, fetch CVE data, or communicate with the Telegram API. |
 
 <Note>
-  `postgres`, `valkey`, and `frontend` are **not** attached to the `external` network, so they have no direct internet access. The `backend` container uses `extra_hosts: host.docker.internal:host-gateway` to allow tools to reach services running on the Docker host itself.
+  `postgres`, `valkey`, and `frontend` are **not** attached to the `external` network, so they have no direct internet access. All worker services (`tasks-worker`, `executions-worker`, `findings-worker`, `monitor-worker`, `telegram-bot`) and `backend` include `extra_hosts: host.docker.internal:host-gateway` so they can reach services running on the Docker host itself.
 </Note>

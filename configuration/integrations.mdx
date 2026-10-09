@@ -1,5 +1,5 @@
 ---
-title: 'Connect External Services and Integrations'
+title: 'Connect External Platforms and Integrations in Rekono'
 sidebarTitle: 'Integrations'
 description: 'Configure DefectDojo, VirusTotal, Telegram, SMTP, and multiple CVE data sources to enrich findings and streamline vulnerability management.'
 ---
@@ -14,11 +14,11 @@ DefectDojo is an open-source vulnerability management platform. When you link Re
 
 | Field | Description |
 |-------|-------------|
-| `server` | Full URL of your DefectDojo instance (e.g. `https://defectdojo.example.com`). |
-| `api_token` | DefectDojo API key. Stored encrypted in the database; never returned in API responses. |
+| `server` | Full URL of your DefectDojo instance (e.g. `https://defectdojo.example.com`). If you accidentally include `/api/v2` in the URL, Rekono strips it automatically. |
+| `api_token` | DefectDojo API key. Stored encrypted in the database; never returned in full in API responses. |
 | `tls_validation` | Whether Rekono validates the TLS certificate of the DefectDojo server. Set to `false` only when using a self-signed certificate. |
-| `tag` | A label added to every product, engagement, and finding that Rekono creates in DefectDojo, so you can filter Rekono-sourced data easily. |
-| `date_format` | Date format that your DefectDojo instance expects (e.g. `%Y-%m-%d`). Must match the format configured in DefectDojo itself. |
+| `tag` | A label added to every engagement and test that Rekono creates in DefectDojo, so you can filter Rekono-sourced data easily. |
+| `is_available` | Read-only. Whether the configured server answered the last time the settings were checked. |
 
 Only Admin users can update DefectDojo settings. Admins and Auditors can create and delete project synchronizations.
 
@@ -30,19 +30,20 @@ Link an individual Rekono project to a DefectDojo product by posting a `DefectDo
 |-------|-------------|
 | `project` | ID of the Rekono project to synchronize. |
 | `product_id` | ID of the DefectDojo product that will receive the findings. |
-| `engagement_id` | Optional. A fixed DefectDojo engagement for all findings; if omitted, Rekono creates one engagement per target. |
+| `engagement_id` | Optional. A fixed DefectDojo engagement for all findings; if omitted, Rekono creates one engagement per target automatically. |
 | `reimport` | When `true`, findings are added to the existing test of the previous execution instead of creating a new test. |
 | `close_old_findings` | When `true`, findings from that test that are no longer discovered are marked as closed in DefectDojo. |
 
 ## VirusTotal
 
-VirusTotal provides reputation and malware analysis for IP addresses, domains, and URLs. Rekono queries VirusTotal for each discovered host to determine whether it has been flagged by any security vendor.
+VirusTotal provides reputation and malware analysis for IP addresses and domains. Rekono queries VirusTotal for each discovered host that has a public IP address to determine whether it has been flagged by any security vendor.
 
 **Configuration** (API: `GET /api/virustotal/`, `PUT /api/virustotal/{id}/`):
 
 | Field | Description |
 |-------|-------------|
 | `api_token` | Your VirusTotal API key. Stored encrypted. Rekono validates the key when it is saved, and the `is_available` field reflects whether the last check succeeded. |
+| `is_available` | Read-only. Whether the platform answered the last time the API token was saved. |
 
 Obtain a free or commercial API key from [virustotal.com](https://www.virustotal.com/gui/join-community). Only Admin users can update VirusTotal settings; Admins, Auditors, and Readers can view the current configuration.
 
@@ -67,6 +68,7 @@ CVE Crowd tracks trending CVEs based on social-media discussion volume. Rekono q
 | `api_token` | Your CVE Crowd API key. Stored encrypted. |
 | `trending_span_days` | How many days of discussion history to consider when deciding a CVE is trending. Choices: `1`, `7`, or `30` days. |
 | `execute_per_execution` | When `true`, trending status is checked immediately when a vulnerability is discovered, not just by the nightly monitor job. |
+| `is_available` | Read-only. Whether the platform answered the last time the API token was saved. |
 
 Only Admin users can view and update CVE Crowd settings.
 
@@ -85,6 +87,7 @@ The National Vulnerability Database (NVD) from NIST is the authoritative source 
 | Field | Description |
 |-------|-------------|
 | `api_token` | Optional NVD API key. The NVD API works without authentication, but providing a key raises the rate limit significantly for high-volume deployments. Stored encrypted. |
+| `is_available` | Read-only. Whether the NVD API answered the last time the settings were checked. |
 
 Only Admin users can view and update NVD NIST settings. Register for a free NVD API key at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key).
 
@@ -97,6 +100,7 @@ VulnCheck NVD++ enhances standard NVD data with additional exploit intelligence,
 | Field | Description |
 |-------|-------------|
 | `api_token` | Your VulnCheck API key. **Required** — VulnCheck rejects unauthenticated requests. Stored encrypted. |
+| `is_available` | Read-only. Whether the platform answered the last time the API token was saved. |
 
 Only Admin users can view and update VulnCheck settings. Obtain an API key from [vulncheck.com](https://vulncheck.com).
 
@@ -113,6 +117,7 @@ SMTP integration enables Rekono to send email notifications for execution result
 | `username` | string | — | Username Rekono authenticates with. |
 | `password` | string | — | Password for the SMTP account. Stored encrypted. |
 | `tls` | boolean | `true` | Whether to use a TLS-encrypted connection. Disable only on trusted internal relays. |
+| `is_available` | boolean | — | Read-only. Whether the configured server accepted a connection during the last check. |
 
 Only Admin users can update SMTP settings. Without SMTP configured, user invitations cannot be sent and email notifications are unavailable.
 
@@ -129,16 +134,18 @@ The Telegram integration runs a bot that sends real-time notifications directly 
 | Field | Description |
 |-------|-------------|
 | `token` | The bot token issued by Telegram's BotFather. Stored encrypted. |
+| `bot` | Read-only. The name of the bot that the configured token belongs to, as returned by Telegram. |
+| `is_available` | Read-only. Whether Telegram accepts the configured token. |
 
 <Steps>
   <Step title="Create a bot">
     Open Telegram and send `/newbot` to `@BotFather`. Copy the token it returns.
   </Step>
   <Step title="Save the token in Rekono">
-    PUT the token to `PUT /api/telegram/settings/{id}/` as `{ "token": "<your-token>" }`. The `telegram-bot` Docker service reads this value and starts polling Telegram.
+    PUT the token to `/api/telegram/settings/{id}/` as `{ "token": "<your-token>" }`. The `telegram-bot` Docker service reads this value and starts polling Telegram.
   </Step>
   <Step title="Each user links their chat">
-    Users start a conversation with the bot. Rekono assigns a one-time code to the chat session; users link it to their account via `POST /api/telegram/link/` with that code, after which the bot begins delivering notifications.
+    Users start a conversation with the bot. The bot displays a one-time code; users submit that code to `POST /api/telegram/link/` with `{ "otp": "<code>" }` to link the chat to their Rekono account.
   </Step>
   <Step title="Enable Telegram notifications per user">
     Each user can toggle `telegram_notifications` in their profile (`PUT /api/profile/`) to start or stop receiving bot messages.

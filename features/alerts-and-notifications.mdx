@@ -1,7 +1,7 @@
 ---
 title: 'Alerts and Notifications for Security Findings'
 sidebarTitle: 'Alerts'
-description: 'Create rules that notify you by email or Telegram the moment a specific host, port, technology, or vulnerability appears in a project.'
+description: 'Configure per-project alert rules that notify subscribers by email or Telegram whenever a host, CVE, credential, or other finding is discovered.'
 ---
 
 Rekono's alert system lets you define fine-grained notification rules at the project level, so the right people are informed the instant a scan uncovers something relevant. Rather than filtering through every result yourself, you configure an alert for the finding type you care about — a new open port, an exposed credential, a known CVE — and let Rekono deliver the notification automatically through email or Telegram as soon as the finding is created.
@@ -36,7 +36,7 @@ The `AlertItem` enum defines every finding type that can be watched:
     A host discovered by its IP address. Optionally filter by a specific IP.
   </Card>
   <Card title="Open Port" icon="door-open">
-    Any port whose status is `Open`. Optionally filter by port number.
+    Any port whose status is `Open`. No value filter is supported for this item — the alert fires for every newly discovered open port.
   </Card>
   <Card title="Service" icon="network-wired">
     Any port with a detected service. Optionally filter by service name (e.g. `http`).

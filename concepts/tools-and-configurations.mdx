@@ -1,7 +1,7 @@
 ---
-title: 'Hacking Tools and Configurations in Rekono'
+title: 'Hacking Tools, Intensities, and Configurations in Rekono'
 sidebarTitle: 'Tools & Configurations'
-description: 'Rekono runs 19 hacking tools through configurations that define commands, arguments, and what findings each one needs as input.'
+description: 'Rekono chains 19 hacking tools through named configurations that declare their command template, assessment stage, required inputs, and produced findings.'
 ---
 
 Rekono's automation engine is built on top of a catalog of **tools** and **configurations**. A tool is a real security program — Nmap, Nuclei, Metasploit — together with the metadata Rekono needs to run it: its command, how to check whether it is installed, and how to parse its output into structured findings. A configuration is a named preset for that tool: a specific command template with placeholders, a stage that places it in the assessment order, and a set of declared inputs and outputs that tell the scheduler what findings it needs and what it will produce. This page explains the full model so you understand how Rekono decides which tool runs next and how to build effective processes.
@@ -23,6 +23,7 @@ class Tool(BaseLike):
     version_argument          = models.TextField(max_length=30, blank=True, null=True)
     output_format             = models.TextField(max_length=5, blank=True, null=True)
     reference                 = models.TextField(max_length=250, blank=True, null=True)
+    icon                      = models.TextField(max_length=250, blank=True, null=True)
     defectdojo_scan_type      = models.TextField(max_length=100, blank=True, null=True)
 ```
 
@@ -152,23 +153,20 @@ Rekono ships with data fixtures for the following tools. The `is_installed` flag
 |---|---|---|
 | theHarvester | OSINT | Subdomain & email discovery |
 | EmailHarvester | OSINT | Email harvesting |
-| EmailFinder | OSINT | Email discovery |
-| Gobuster (DNS mode) | OSINT | Subdomain enumeration |
 | Nmap | ENUMERATION | Host, port & service scanning |
-| Gobuster (VHOST mode) | ENUMERATION | Virtual host discovery |
 | Dirsearch | SERVICES | Web directory & endpoint brute-force |
-| Gobuster (dir mode) | SERVICES | Web endpoint enumeration |
+| Gobuster | OSINT / ENUMERATION / SERVICES | Subdomain, virtual host, and web endpoint enumeration |
 | Sslscan | SERVICES | SSL/TLS analysis |
 | SSLyze | SERVICES | SSL/TLS analysis |
-| CMSeeK | SERVICES | CMS detection & enumeration |
-| JoomScan | SERVICES | Joomla vulnerability scanning |
-| Log4j Scan | SERVICES | Log4Shell (CVE-2021-44228) detection |
-| Spring4Shell Scan | SERVICES | Spring4Shell (CVE-2022-22965) detection |
 | GitLeaks | SERVICES | Exposed secrets in Git repositories |
 | SSH Audit | SERVICES | SSH configuration & vulnerability audit |
 | SMBMap | SERVICES | SMB share enumeration |
-| Nikto | SERVICES | Web server misconfiguration & vulnerability scan |
+| Log4j Scan | SERVICES | Log4Shell (CVE-2021-44228) detection |
+| Spring4Shell Scan | SERVICES | Spring4Shell (CVE-2022-22965) detection |
+| CMSeeK | SERVICES | CMS detection & enumeration |
+| JoomScan | SERVICES | Joomla vulnerability scanning |
 | ZAP | SERVICES | OWASP ZAP active web application scan |
+| Nikto | SERVICES | Web server misconfiguration & vulnerability scan |
 | Nuclei | SERVICES | Template-based vulnerability scanning |
 | SearchSploit | EXPLOITATION | Exploit Database search by technology or CVE |
 | Metasploit | EXPLOITATION | Exploit search and execution by CVE |
